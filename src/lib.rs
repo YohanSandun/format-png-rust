@@ -1,3 +1,8 @@
+pub mod png;
+mod io;
+mod decoder;
+mod error;
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }
