@@ -37,6 +37,11 @@ impl<'a> ByteReader<'a> {
         self.pos = end;
         Ok(data)
     }
+
+    /// Returns `true` once every byte has been read.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.pos == self.data.len()
+    }
 }
 
 #[cfg(test)]

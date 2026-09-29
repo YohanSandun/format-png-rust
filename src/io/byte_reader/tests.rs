@@ -253,3 +253,33 @@ fn mixed_reads_parse_png_chunk() {
     assert_eq!(reader.read_u32(), Ok(0x1122_3344));
     assert_eq!(reader.read_u8(), Err(Error::UnexpectedEndOfInput));
 }
+
+// ---------- is_empty ----------
+
+#[test]
+fn is_empty_on_empty_input() {
+    let reader = ByteReader::new(&[]);
+
+    assert!(reader.is_empty());
+}
+
+#[test]
+fn is_empty_becomes_true_after_reading_everything() {
+    let data = [1, 2];
+    let mut reader = ByteReader::new(&data);
+
+    assert!(!reader.is_empty());
+    reader.read_u8().unwrap();
+    assert!(!reader.is_empty());
+    reader.read_u8().unwrap();
+    assert!(reader.is_empty());
+}
+
+#[test]
+fn is_empty_unchanged_by_failed_read() {
+    let data = [1, 2, 3];
+    let mut reader = ByteReader::new(&data);
+
+    assert!(reader.read_u32().is_err());
+    assert!(!reader.is_empty());
+}
