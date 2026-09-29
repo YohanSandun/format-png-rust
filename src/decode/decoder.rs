@@ -5,7 +5,8 @@ use crate::decode::image_data::collect_image_data;
 use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
-use crate::png::{ChunkType, Image, ImageHeader, Interlace};
+use crate::convert::{Source, convert};
+use crate::png::{Bitmap, ChunkType, Image, ImageHeader, Interlace, PixelFormat};
 use rust_deflate::{Decompressor, OutputOptions};
 
 /// A reusable PNG decoder.
@@ -40,6 +41,8 @@ pub struct Decoder {
     scanlines: Vec<u8>,
     /// One unfiltered Adam7 pass, before it's spread into the image.
     pass: Vec<u8>,
+    /// The decoded image in its own format, before it's converted to a bitmap.
+    pixels: Vec<u8>,
 }
 
 impl Decoder {
@@ -62,6 +65,7 @@ impl Decoder {
             compressed: Vec::new(),
             scanlines: Vec::new(),
             pass: Vec::new(),
+            pixels: Vec::new(),
         }
     }
 
@@ -174,6 +178,52 @@ impl Decoder {
         }
 
         Ok(header)
+    }
+
+    /// Decodes the image and converts it to `format`, for display.
+    ///
+    /// ```
+    /// use format_png::{Decoder, PixelFormat};
+    ///
+    /// let mut decoder = Decoder::new();
+    /// let bitmap = decoder.decode_bitmap(&std::fs::read("tests/data/valid/gray_2.png")?, PixelFormat::Rgba8)?;
+    ///
+    /// assert_eq!(bitmap.data().len(), 13 * 7 * 4);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Same as [`decode_bitmap_into`](Self::decode_bitmap_into).
+    pub fn decode_bitmap(&mut self, data: &[u8], format: PixelFormat) -> Result<Bitmap, Error> {
+        let mut out = Vec::new();
+        let header = self.decode_bitmap_into(data, format, &mut out)?;
+        Ok(Bitmap::new(header.width, header.height, format, out))
+    }
+
+    /// Like [`decode_bitmap`](Self::decode_bitmap), but writes the pixels to `out`
+    /// and returns only the header. `out`'s old contents are replaced and its
+    /// allocation is reused; the decoder also keeps its own buffer for the
+    /// unconverted pixels. The layout is the same as [`Bitmap::data`].
+    ///
+    /// # Errors
+    ///
+    /// - Any error from [`decode_into`](Self::decode_into).
+    /// - Any error from [`Image::to_bitmap`], such as [`Error::MissingPalette`]
+    ///   for indexed images.
+    pub fn decode_bitmap_into(&mut self, data: &[u8], format: PixelFormat, out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
+        // `decode_into` borrows all of `self`, so the pixel buffer is taken out
+        // for the call and put back afterwards, even on error.
+        let mut pixels = std::mem::take(&mut self.pixels);
+
+        let result = self.decode_into(data, &mut pixels).and_then(|header| {
+            let source = Source { header: &header, stride: header.stride()?, data: &pixels };
+            convert(&source, format, out)?;
+            Ok(header)
+        });
+
+        self.pixels = pixels;
+        result
     }
 
     /// Unfilters each non-empty pass of `self.scanlines` into `self.pass` and

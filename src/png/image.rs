@@ -1,4 +1,6 @@
-use crate::png::ImageHeader;
+use crate::convert::{Source, convert};
+use crate::error::Error;
+use crate::png::{Bitmap, ImageHeader, PixelFormat};
 
 /// A decoded image, in the PNG's own pixel format.
 ///
@@ -63,6 +65,27 @@ impl Image {
     /// Consumes the image and returns its pixel data.
     pub fn into_data(self) -> Vec<u8> {
         self.data
+    }
+
+    /// Converts the pixels to `format`, for display.
+    ///
+    /// Samples under 8 bits are scaled to the full range, 16-bit samples keep
+    /// their high byte, and grayscale is copied to red, green and blue. Converting
+    /// to [`PixelFormat::Rgba8`] adds alpha 255 to images without alpha, and
+    /// [`PixelFormat::Rgb8`] drops alpha.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::MissingPalette`] for indexed images, as `PLTE` isn't read yet.
+    /// - [`Error::ImageTooLarge`] if the bitmap doesn't fit in memory on this platform.
+    pub fn to_bitmap(&self, format: PixelFormat) -> Result<Bitmap, Error> {
+        let mut data = Vec::new();
+        convert(&self.source(), format, &mut data)?;
+        Ok(Bitmap::new(self.width(), self.height(), format, data))
+    }
+
+    pub(crate) fn source(&self) -> Source<'_> {
+        Source { header: &self.header, stride: self.stride, data: &self.data }
     }
 }
 

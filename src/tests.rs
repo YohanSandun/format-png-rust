@@ -43,3 +43,22 @@ fn decode_reads_pixels() {
 fn decode_rejects_non_png() {
     assert_eq!(crate::decode(b"GIF89a"), Err(Error::InvalidSignature));
 }
+
+#[test]
+fn decode_rgba8_and_rgb8_convert_pixels() {
+    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/rgba_8_1x1.png")).unwrap();
+
+    // generate.py: sample(0, 0, c) = c * 53
+    let rgba = crate::decode_rgba8(&data).unwrap();
+    assert_eq!(rgba.format(), crate::PixelFormat::Rgba8);
+    assert_eq!(rgba.data(), &[0, 53, 106, 159]);
+
+    let rgb = crate::decode_rgb8(&data).unwrap();
+    assert_eq!(rgb.format(), crate::PixelFormat::Rgb8);
+    assert_eq!(rgb.data(), &[0, 53, 106]);
+}
+
+#[test]
+fn decode_rgba8_rejects_non_png() {
+    assert_eq!(crate::decode_rgba8(b"GIF89a"), Err(Error::InvalidSignature));
+}

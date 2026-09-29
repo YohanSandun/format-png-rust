@@ -72,6 +72,9 @@ pub enum Error {
 
     /// The decoded image is too large to address with `usize` on this platform.
     ImageTooLarge,
+
+    /// An indexed image can't be converted to colors without its `PLTE` palette.
+    MissingPalette,
 }
 
 impl fmt::Display for Error {
@@ -112,6 +115,7 @@ impl fmt::Display for Error {
             }
             Error::InvalidFilterType(value) => write!(f, "invalid filter type {value}"),
             Error::ImageTooLarge => f.write_str("image is too large for this platform"),
+            Error::MissingPalette => f.write_str("indexed image has no palette"),
         }
     }
 }

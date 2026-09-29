@@ -1,33 +1,92 @@
-//! A PNG decoder with a simple API for common use and full access to the file's
-//! chunks when you need it.
+//! A PNG decoder with a simple API for getting pixels on screen, and full
+//! control when you need it.
 //!
-//! Pixels are returned in the file's own format, without conversion; see [`Image`].
-//! Ancillary chunks such as `PLTE`, `tRNS` and text are skipped for now.
+//! Every color type, every bit depth and Adam7 interlacing are supported.
+//! Encoding isn't implemented yet.
 //!
-//! - [`decode`] decodes one image, and [`read_header`] reads just its header.
-//! - A [`Decoder`] can be reused for many images, and keeps its decompressor and
-//!   buffers between them.
+//! # Getting started
+//!
+//! [`decode_rgba8`] decodes a PNG to 8-bit RGBA, the layout a browser canvas's
+//! `ImageData` expects:
+//!
+//! ```
+//! let data = std::fs::read("tests/data/valid/rgb_8.png")?;
+//! let bitmap = format_png::decode_rgba8(&data)?;
+//!
+//! assert_eq!((bitmap.width(), bitmap.height()), (13, 7));
+//! assert_eq!(bitmap.data().len(), 13 * 7 * 4); // no row padding
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! [`decode_rgb8`] does the same without alpha. See [`Image::to_bitmap`] for
+//! the conversion rules.
+//!
+//! # More control
+//!
+//! - A [`Decoder`] can be reused for many images. It keeps its decompressor and
+//!   working buffers between them, and [`Decoder::decode_bitmap_into`] and
+//!   [`Decoder::decode_into`] also reuse your output buffer.
+//! - [`decode`] returns an [`Image`] in the file's own pixel format, without
+//!   conversion: 16-bit samples, packed pixels under 8 bits, and palette indices.
+//! - [`read_header`] reads only the image header.
 //! - A [`ChunkReader`] returns every chunk raw, including ancillary, private and
 //!   unknown ones. Chunk types are in the [`png`] module.
 //!
 //! ```
-//! let data = std::fs::read("tests/data/valid/rgba_8.png")?;
+//! let data = std::fs::read("tests/data/valid/rgba_16.png")?;
 //! let image = format_png::decode(&data)?;
 //!
-//! assert_eq!((image.width(), image.height()), (13, 7));
 //! assert_eq!(image.header().color_type, format_png::ColorType::Rgba);
-//! assert_eq!(image.data().len(), 13 * 7 * 4);
+//! assert_eq!(image.stride(), 13 * 8); // 4 channels of 2 bytes
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Not supported yet
+//!
+//! `PLTE` and `tRNS` aren't read, so indexed images can't be converted to colors
+//! ([`Error::MissingPalette`]) and `tRNS` transparency isn't applied. Other
+//! ancillary chunks are skipped by the decoder, but a [`ChunkReader`] still
+//! returns them.
 
 pub mod png;
+mod convert;
 mod io;
 mod decode;
 mod error;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use error::Error;
-pub use png::{ColorType, Image, ImageHeader, Interlace};
+pub use png::{Bitmap, ColorType, Image, ImageHeader, Interlace, PixelFormat};
+
+/// Decodes a PNG to 8-bit RGBA, ready for a browser canvas's `ImageData`.
+///
+/// This is the simplest way to display an image. To decode many images, reuse a
+/// [`Decoder`] and call [`Decoder::decode_bitmap_into`] instead.
+///
+/// ```
+/// let data = std::fs::read("tests/data/valid/rgb_8.png")?;
+/// let bitmap = format_png::decode_rgba8(&data)?;
+///
+/// assert_eq!((bitmap.width(), bitmap.height()), (13, 7));
+/// assert_eq!(bitmap.data().len(), 13 * 7 * 4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// Same as [`Decoder::decode_bitmap_into`].
+pub fn decode_rgba8(data: &[u8]) -> Result<Bitmap, Error> {
+    Decoder::new().decode_bitmap(data, PixelFormat::Rgba8)
+}
+
+/// Decodes a PNG to 8-bit RGB, dropping any alpha.
+///
+/// # Errors
+///
+/// Same as [`Decoder::decode_bitmap_into`].
+pub fn decode_rgb8(data: &[u8]) -> Result<Bitmap, Error> {
+    Decoder::new().decode_bitmap(data, PixelFormat::Rgb8)
+}
 
 /// Decodes a PNG with default options.
 ///
@@ -54,3 +113,8 @@ pub fn read_header(data: &[u8]) -> Result<ImageHeader, Error> {
 
 #[cfg(test)]
 mod tests;
+
+// Compiles the README's examples as doctests, so they can't drift from the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

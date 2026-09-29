@@ -1,12 +1,14 @@
 //! PNG format types shared by the decoder (and, later, the encoder).
 
 pub(crate) mod adam7;
+mod bitmap;
 mod chunk;
 pub(crate) mod crc;
 mod filter;
 mod header;
 mod image;
 
+pub use bitmap::{Bitmap, PixelFormat};
 pub use chunk::{Chunk, ChunkType};
 pub use filter::FilterType;
 pub use header::{ColorType, ImageHeader, Interlace};

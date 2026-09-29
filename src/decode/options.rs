@@ -12,10 +12,10 @@ pub struct DecodeOptions {
     /// Whether to validate CRC values of PNG chunks. On by default.
     pub validate_crc: bool,
 
-    /// Whether to preserve ancillary chunks in the decoded result.
+    /// Whether to preserve ancillary chunks in the decoded result. Not used yet.
     pub preserve_chunks: bool,
 
-    /// Whether to preserve PNG metadata in the decoded result.
+    /// Whether to preserve PNG metadata in the decoded result. Not used yet.
     pub preserve_metadata: bool,
 }
 

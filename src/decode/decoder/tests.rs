@@ -5,7 +5,7 @@ use rust_deflate::Decompressor;
 use super::Decoder;
 use crate::decode::options::DecodeOptions;
 use crate::error::Error;
-use crate::png::{ChunkType, ColorType, ImageHeader, Interlace, SIGNATURE};
+use crate::png::{ChunkType, ColorType, ImageHeader, Interlace, PixelFormat, SIGNATURE};
 
 /// Signature + IHDR for a 1x1, 8-bit RGBA image, with its correct CRC.
 const PNG_1X1_RGBA: [u8; 33] = [
@@ -467,4 +467,79 @@ fn decode_checks_idat_crc_unless_turned_off() {
         Decoder::with_options(lenient_options()).decode(&data).unwrap().data(),
         &[1, 2, 3, 4]
     );
+}
+
+// ---------- decode_bitmap ----------
+
+#[test]
+fn decode_bitmap_rgba_1x1() {
+    let bitmap = Decoder::new().decode_bitmap(&rgba_1x1(), PixelFormat::Rgba8).unwrap();
+
+    assert_eq!((bitmap.width(), bitmap.height()), (1, 1));
+    assert_eq!(bitmap.format(), PixelFormat::Rgba8);
+    assert_eq!(bitmap.data(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn decode_bitmap_rgb_drops_alpha() {
+    let bitmap = Decoder::new().decode_bitmap(&rgba_1x1(), PixelFormat::Rgb8).unwrap();
+
+    assert_eq!(bitmap.data(), &[1, 2, 3]);
+}
+
+#[test]
+fn decode_bitmap_expands_gray() {
+    let data = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
+    let bitmap = Decoder::new().decode_bitmap(&data, PixelFormat::Rgb8).unwrap();
+
+    assert_eq!(bitmap.data(), &[10, 10, 10, 15, 15, 15, 11, 11, 11, 16, 16, 16]);
+}
+
+#[test]
+fn decode_bitmap_of_interlaced_image() {
+    let data = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &[0, 1, 0, 3, 0, 2, 1, 4, 1, 1]);
+    let bitmap = Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8).unwrap();
+
+    let expected: Vec<u8> = (1..=6).flat_map(|v| [v, v, v, 255]).collect();
+    assert_eq!(bitmap.data(), expected);
+}
+
+#[test]
+fn decode_bitmap_into_reuses_decoder_and_buffer() {
+    let mut decoder = Decoder::new();
+    let mut out = vec![0xEE; 64];
+    let gray = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
+
+    let header = decoder.decode_bitmap_into(&rgba_1x1(), PixelFormat::Rgba8, &mut out).unwrap();
+    assert_eq!(header, rgba_1x1_header());
+    assert_eq!(out, [1, 2, 3, 4]);
+
+    decoder.decode_bitmap_into(&gray, PixelFormat::Rgba8, &mut out).unwrap();
+    assert_eq!(out, [10, 10, 10, 255, 15, 15, 15, 255, 11, 11, 11, 255, 16, 16, 16, 255]);
+}
+
+#[test]
+fn decode_bitmap_still_works_after_a_failure() {
+    let mut decoder = Decoder::new();
+    let broken = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[9, 1, 2, 3, 4]);
+
+    assert_eq!(decoder.decode_bitmap(&broken, PixelFormat::Rgba8), Err(Error::InvalidFilterType(9)));
+    assert_eq!(decoder.decode_bitmap(&rgba_1x1(), PixelFormat::Rgba8).unwrap().data(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn decode_bitmap_passes_on_decode_errors() {
+    assert_eq!(
+        Decoder::new().decode_bitmap(b"not a png", PixelFormat::Rgba8),
+        Err(Error::InvalidSignature)
+    );
+}
+
+#[test]
+fn decode_bitmap_of_indexed_image_needs_a_palette() {
+    let data = png(ihdr(2, 1, 8, ColorType::Indexed, Interlace::None), &[0, 0, 1]);
+
+    assert_eq!(Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8), Err(Error::MissingPalette));
+    // the unconverted pixels still decode
+    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[0, 1]);
 }
