@@ -195,3 +195,111 @@ fn parse_rejects_unknown_interlace_method() {
         Err(Error::InvalidInterlaceMethod(2))
     );
 }
+
+// ---------- sizes ----------
+
+fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType, interlace: Interlace) -> ImageHeader {
+    ImageHeader { width, height, bit_depth, color_type, interlace }
+}
+
+#[test]
+fn channels_per_color_type() {
+    assert_eq!(ColorType::Grayscale.channels(), 1);
+    assert_eq!(ColorType::Rgb.channels(), 3);
+    assert_eq!(ColorType::Indexed.channels(), 1);
+    assert_eq!(ColorType::GrayscaleAlpha.channels(), 2);
+    assert_eq!(ColorType::Rgba.channels(), 4);
+}
+
+#[test]
+fn bits_per_pixel() {
+    assert_eq!(header(1, 1, 1, ColorType::Grayscale, Interlace::None).bits_per_pixel(), 1);
+    assert_eq!(header(1, 1, 4, ColorType::Indexed, Interlace::None).bits_per_pixel(), 4);
+    assert_eq!(header(1, 1, 8, ColorType::Rgb, Interlace::None).bits_per_pixel(), 24);
+    assert_eq!(header(1, 1, 16, ColorType::GrayscaleAlpha, Interlace::None).bits_per_pixel(), 32);
+    assert_eq!(header(1, 1, 16, ColorType::Rgba, Interlace::None).bits_per_pixel(), 64);
+}
+
+#[test]
+fn filter_bpp_rounds_sub_byte_pixels_up_to_one() {
+    assert_eq!(header(1, 1, 1, ColorType::Grayscale, Interlace::None).filter_bpp(), 1);
+    assert_eq!(header(1, 1, 4, ColorType::Indexed, Interlace::None).filter_bpp(), 1);
+    assert_eq!(header(1, 1, 8, ColorType::Grayscale, Interlace::None).filter_bpp(), 1);
+    assert_eq!(header(1, 1, 16, ColorType::Grayscale, Interlace::None).filter_bpp(), 2);
+    assert_eq!(header(1, 1, 8, ColorType::Rgb, Interlace::None).filter_bpp(), 3);
+    assert_eq!(header(1, 1, 16, ColorType::Rgba, Interlace::None).filter_bpp(), 8);
+}
+
+#[test]
+fn stride_pads_sub_byte_rows() {
+    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::None).stride(), Ok(2));
+    assert_eq!(header(13, 7, 2, ColorType::Grayscale, Interlace::None).stride(), Ok(4));
+    assert_eq!(header(16, 1, 1, ColorType::Grayscale, Interlace::None).stride(), Ok(2));
+    assert_eq!(header(17, 1, 4, ColorType::Indexed, Interlace::None).stride(), Ok(9));
+}
+
+#[test]
+fn stride_of_whole_byte_pixels() {
+    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::None).stride(), Ok(52));
+    assert_eq!(header(13, 7, 16, ColorType::Rgb, Interlace::None).stride(), Ok(78));
+    assert_eq!(header(13, 7, 16, ColorType::Rgba, Interlace::None).stride(), Ok(104));
+}
+
+#[test]
+fn row_bytes_for_narrower_rows() {
+    let header = header(13, 7, 2, ColorType::Grayscale, Interlace::Adam7);
+
+    assert_eq!(header.row_bytes(1), Ok(1));
+    assert_eq!(header.row_bytes(4), Ok(1));
+    assert_eq!(header.row_bytes(5), Ok(2));
+}
+
+#[test]
+fn image_size_is_stride_times_height() {
+    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::None).image_size(), Ok(364));
+    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::None).image_size(), Ok(14));
+    assert_eq!(header(1, 1, 8, ColorType::Rgba, Interlace::Adam7).image_size(), Ok(4));
+}
+
+#[test]
+fn scanline_size_adds_a_filter_byte_per_row() {
+    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::None).scanline_size(), Ok(371));
+    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::None).scanline_size(), Ok(21));
+    assert_eq!(header(13, 7, 16, ColorType::Rgb, Interlace::None).scanline_size(), Ok(553));
+}
+
+#[test]
+fn scanline_size_counts_every_non_empty_adam7_pass() {
+    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::Adam7).scanline_size(), Ok(378));
+    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::Adam7).scanline_size(), Ok(31));
+    assert_eq!(header(13, 7, 2, ColorType::Grayscale, Interlace::Adam7).scanline_size(), Ok(43));
+    assert_eq!(header(13, 7, 16, ColorType::Rgba, Interlace::Adam7).scanline_size(), Ok(742));
+}
+
+#[test]
+fn scanline_size_skips_empty_adam7_passes() {
+    // only the first pass has pixels: one row of one pixel plus its filter byte
+    assert_eq!(header(1, 1, 8, ColorType::Rgba, Interlace::Adam7).scanline_size(), Ok(5));
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn sizes_of_largest_image_overflow_usize() {
+    let max = (1 << 31) - 1;
+    let header = header(max, max, 16, ColorType::Rgba, Interlace::None);
+
+    assert_eq!(header.stride(), Ok(8 * max as usize));
+    assert_eq!(header.image_size(), Err(Error::ImageTooLarge));
+    assert_eq!(header.scanline_size(), Err(Error::ImageTooLarge));
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn adam7_scanline_size_of_largest_image_overflows_usize() {
+    let max = (1 << 31) - 1;
+
+    assert_eq!(
+        header(max, max, 16, ColorType::Rgba, Interlace::Adam7).scanline_size(),
+        Err(Error::ImageTooLarge)
+    );
+}

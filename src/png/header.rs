@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::io::ByteReader;
+use crate::png::adam7;
 
 const MAX_DIMENSION: u32 = 2_147_483_647;
 
@@ -18,6 +19,19 @@ pub enum ColorType {
     GrayscaleAlpha = 4,
     /// Red, green, blue and alpha samples. Bit depths 8 or 16.
     Rgba = 6,
+}
+
+impl ColorType {
+    /// Samples per pixel: 1 for grayscale and indexed, 2 for grayscale with alpha,
+    /// 3 for RGB and 4 for RGBA.
+    pub fn channels(self) -> u8 {
+        match self {
+            ColorType::Grayscale | ColorType::Indexed => 1u8,
+            ColorType::Rgb => 3u8,
+            ColorType::GrayscaleAlpha => 2u8,
+            ColorType::Rgba => 4u8,
+        }
+    }
 }
 
 impl TryFrom<u8> for ColorType {
@@ -60,11 +74,11 @@ impl TryFrom<u8> for Interlace {
     ///
     /// Returns [`Error::InvalidInterlaceMethod`] for anything other than 0 or 1.
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-       match value {
-           0 => Ok(Interlace::None),
-           1 => Ok(Interlace::Adam7),
-           _ => Err(Error::InvalidInterlaceMethod(value))
-       }
+        match value {
+            0 => Ok(Interlace::None),
+            1 => Ok(Interlace::Adam7),
+            _ => Err(Error::InvalidInterlaceMethod(value)),
+        }
     }
 }
 
@@ -90,7 +104,7 @@ pub struct ImageHeader {
 impl ImageHeader {
     /// Length of the `IHDR` chunk data in bytes.
     pub const LENGTH: usize = 13;
-    
+
     /// Parses and validates the data of an `IHDR` chunk, without its length, type or CRC.
     ///
     /// Use this with [`Chunk::data`](crate::png::Chunk::data) when reading chunks
@@ -122,10 +136,15 @@ impl ImageHeader {
         let bit_depth_allowed = match color_type {
             ColorType::Grayscale => matches!(bit_depth, 1 | 2 | 4 | 8 | 16),
             ColorType::Indexed => matches!(bit_depth, 1 | 2 | 4 | 8),
-            ColorType::Rgb | ColorType::GrayscaleAlpha | ColorType::Rgba => matches!(bit_depth, 8 | 16),
+            ColorType::Rgb | ColorType::GrayscaleAlpha | ColorType::Rgba => {
+                matches!(bit_depth, 8 | 16)
+            }
         };
         if !bit_depth_allowed {
-            return Err(Error::InvalidBitDepth { color_type, bit_depth });
+            return Err(Error::InvalidBitDepth {
+                color_type,
+                bit_depth,
+            });
         }
 
         let compression_method = reader.read_u8()?;
@@ -147,6 +166,79 @@ impl ImageHeader {
             color_type,
             interlace,
         })
+    }
+
+    /// Bits per pixel: channels × bit depth, from 1 to 64.
+    pub fn bits_per_pixel(&self) -> u8 {
+        self.color_type.channels() * self.bit_depth
+    }
+
+    /// Bytes per row of decoded pixels. Pixels under 8 bits are packed, so a row
+    /// is padded to a whole byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ImageTooLarge`] if it doesn't fit in `usize`, which is
+    /// only possible on 32-bit and smaller targets.
+    pub fn stride(&self) -> Result<usize, Error> {
+        self.row_bytes(self.width)
+    }
+
+    /// Size in bytes of the decoded image: [`stride`](Self::stride) × height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ImageTooLarge`] if it doesn't fit in `usize`.
+    pub fn image_size(&self) -> Result<usize, Error> {
+        let height = usize::try_from(self.height).map_err(|_| Error::ImageTooLarge)?;
+
+        self.stride()?
+            .checked_mul(height)
+            .ok_or(Error::ImageTooLarge)
+    }
+
+    /// Bytes in one row of `width` pixels, rounded up to a whole byte.
+    /// `Error::ImageTooLarge` if that overflows `usize`.
+    pub(crate) fn row_bytes(&self, width: u32) -> Result<usize, Error> {
+        let bits = u64::from(width) * u64::from(self.bits_per_pixel());
+        usize::try_from(bits.div_ceil(8)).map_err(|_| Error::ImageTooLarge)
+    }
+
+    /// The "bpp" the filters use: bytes per complete pixel, rounded up to 1.
+    /// 1 for every bit depth under 8.
+    pub(crate) fn filter_bpp(&self) -> usize {
+        usize::from(self.bits_per_pixel()).div_ceil(8)
+    }
+
+    /// Size of the decompressed `IDAT` stream: every row of every non-empty pass
+    /// (or of the whole image, when not interlaced), each with its filter type byte.
+    /// Pass sizes come from `crate::png::adam7::PASSES`.
+    /// `Error::ImageTooLarge` if that overflows `usize`.
+    pub(crate) fn scanline_size(&self) -> Result<usize, Error> {
+        match self.interlace {
+            Interlace::None => self.pass_scanline_size(self.width, self.height),
+            Interlace::Adam7 => adam7::PASSES.iter().try_fold(0usize, |total, pass| {
+                let (width, height) = pass.size(self.width, self.height);
+                total
+                    .checked_add(self.pass_scanline_size(width, height)?)
+                    .ok_or(Error::ImageTooLarge)
+            }),
+        }
+    }
+
+    /// Scanline bytes for one pass of `width` x `height` pixels, filter type bytes
+    /// included. An empty pass has no scanlines at all, so it's 0.
+    pub(crate) fn pass_scanline_size(&self, width: u32, height: u32) -> Result<usize, Error> {
+        if width == 0 || height == 0 {
+            return Ok(0);
+        }
+
+        let height = usize::try_from(height).map_err(|_| Error::ImageTooLarge)?;
+
+        self.row_bytes(width)?
+            .checked_add(1)
+            .and_then(|row| row.checked_mul(height))
+            .ok_or(Error::ImageTooLarge)
     }
 }
 

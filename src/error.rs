@@ -48,6 +48,30 @@ pub enum Error {
 
     /// The interlace method is not 0 (none) or 1 (Adam7).
     InvalidInterlaceMethod(u8),
+
+    /// `IEND` comes before any `IDAT` chunk.
+    MissingImageData,
+
+    /// Another chunk comes between two `IDAT` chunks.
+    NonConsecutiveImageData,
+
+    /// The input ends without an `IEND` chunk.
+    MissingImageEnd,
+
+    /// The zlib stream in the `IDAT` chunks is corrupt.
+    Decompression(rust_deflate::Error),
+
+    /// The image data decompresses to fewer bytes than the header requires.
+    ImageDataTooShort { expected: usize, actual: usize },
+
+    /// The image data decompresses to more bytes than the header requires.
+    ImageDataTooLong { expected: usize },
+
+    /// A scanline's filter type is not 0 to 4.
+    InvalidFilterType(u8),
+
+    /// The decoded image is too large to address with `usize` on this platform.
+    ImageTooLarge,
 }
 
 impl fmt::Display for Error {
@@ -76,8 +100,27 @@ impl fmt::Display for Error {
             }
             Error::InvalidFilterMethod(value) => write!(f, "invalid filter method {value}"),
             Error::InvalidInterlaceMethod(value) => write!(f, "invalid interlace method {value}"),
+            Error::MissingImageData => f.write_str("no IDAT chunk before IEND"),
+            Error::NonConsecutiveImageData => f.write_str("IDAT chunks are not consecutive"),
+            Error::MissingImageEnd => f.write_str("no IEND chunk"),
+            Error::Decompression(error) => write!(f, "corrupt image data: {error}"),
+            Error::ImageDataTooShort { expected, actual } => {
+                write!(f, "image data is {actual} bytes, expected {expected}")
+            }
+            Error::ImageDataTooLong { expected } => {
+                write!(f, "image data is longer than the expected {expected} bytes")
+            }
+            Error::InvalidFilterType(value) => write!(f, "invalid filter type {value}"),
+            Error::ImageTooLarge => f.write_str("image is too large for this platform"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Decompression(error) => Some(error),
+            _ => None,
+        }
+    }
+}

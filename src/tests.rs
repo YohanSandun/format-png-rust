@@ -28,3 +28,18 @@ fn read_header_parses_a_png() {
 fn read_header_rejects_non_png() {
     assert_eq!(read_header(b"GIF89a"), Err(Error::InvalidSignature));
 }
+
+#[test]
+fn decode_reads_pixels() {
+    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/rgba_8_1x1.png")).unwrap();
+    let image = crate::decode(&data).unwrap();
+
+    assert_eq!((image.width(), image.height()), (1, 1));
+    // generate.py: sample(0, 0, c) = c * 53
+    assert_eq!(image.data(), &[0, 53, 106, 159]);
+}
+
+#[test]
+fn decode_rejects_non_png() {
+    assert_eq!(crate::decode(b"GIF89a"), Err(Error::InvalidSignature));
+}

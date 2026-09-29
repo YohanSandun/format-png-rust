@@ -1,15 +1,19 @@
-use rust_deflate::Decompressor;
-
 use super::chunk_reader::ChunkReader;
 use super::options::DecodeOptions;
+use crate::decode::deinterlace::deinterlace_pass;
+use crate::decode::image_data::collect_image_data;
+use crate::decode::unfilter::unfilter;
 use crate::error::Error;
-use crate::png::{ChunkType, ImageHeader};
+use crate::png::adam7::PASSES;
+use crate::png::{ChunkType, Image, ImageHeader, Interlace};
+use rust_deflate::{Decompressor, OutputOptions};
 
 /// A reusable PNG decoder.
 ///
-/// It owns a [`Decompressor`] and keeps it between images, so decoding many PNGs
-/// with one `Decoder` avoids setting up its tables for each one. For a single
-/// image, [`read_header`](crate::read_header) is simpler.
+/// It owns a [`Decompressor`] and its working buffers, and keeps them between
+/// images, so decoding many PNGs with one `Decoder` avoids setting them up for
+/// each one. [`decode_into`](Self::decode_into) also reuses your output buffer.
+/// For a single image, [`decode`](crate::decode) is simpler.
 ///
 /// ```
 /// use format_png::{Decoder, DecodeOptions};
@@ -18,18 +22,24 @@ use crate::png::{ChunkType, ImageHeader};
 ///     validate_crc: false,
 ///     ..DecodeOptions::default()
 /// });
+/// let mut pixels = Vec::new();
 ///
 /// for path in ["tests/data/valid/rgb_8.png", "tests/data/valid/gray_16_adam7.png"] {
-///     let header = decoder.read_header(&std::fs::read(path)?)?;
-///     println!("{path}: {}x{}", header.width, header.height);
+///     let header = decoder.decode_into(&std::fs::read(path)?, &mut pixels)?;
+///     println!("{path}: {}x{}, {} bytes", header.width, header.height, pixels.len());
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug)]
 pub struct Decoder {
     options: DecodeOptions,
-    #[allow(dead_code)]
     decompressor: Decompressor,
+    /// The zlib stream: all `IDAT` data joined.
+    compressed: Vec<u8>,
+    /// The decompressed stream: every scanline with its filter type byte.
+    scanlines: Vec<u8>,
+    /// One unfiltered Adam7 pass, before it's spread into the image.
+    pass: Vec<u8>,
 }
 
 impl Decoder {
@@ -46,7 +56,13 @@ impl Decoder {
     /// Creates a decoder that uses an existing [`Decompressor`], for example one taken
     /// from another decoder with [`into_decompressor`](Self::into_decompressor).
     pub fn with_decompressor(options: DecodeOptions, decompressor: Decompressor) -> Self {
-        Self { options, decompressor }
+        Self {
+            options,
+            decompressor,
+            compressed: Vec::new(),
+            scanlines: Vec::new(),
+            pass: Vec::new(),
+        }
     }
 
     /// The options this decoder was created with.
@@ -68,7 +84,7 @@ impl Decoder {
     pub fn chunks<'a>(&self, data: &'a [u8]) -> Result<ChunkReader<'a>, Error> {
         Ok(ChunkReader::new(data)?.validate_crc(self.options.validate_crc))
     }
-    
+
     /// Reads and validates the `IHDR` chunk, which must be the first chunk. Chunks
     /// after it aren't read.
     ///
@@ -79,16 +95,110 @@ impl Decoder {
     /// - [`Error::MissingImageHeader`] if there are no chunks or the first isn't `IHDR`.
     /// - Any error from [`ChunkReader::next_chunk`] or [`ImageHeader::parse`].
     pub fn read_header(&mut self, data: &[u8]) -> Result<ImageHeader, Error> {
-        let mut chunk_reader = self.chunks(data)?;
-        let chunk_option = chunk_reader.next_chunk()?;
+        let mut chunks = self.chunks(data)?;
+        Self::read_image_header(&mut chunks)
+    }
 
-        if let Some(chunk) = chunk_option {
-            if chunk.chunk_type() == ChunkType::IHDR {
-                return ImageHeader::parse(chunk.data());
+    fn read_image_header(chunks: &mut ChunkReader<'_>) -> Result<ImageHeader, Error> {
+        match chunks.next_chunk()? {
+            Some(chunk) if chunk.chunk_type() == ChunkType::IHDR => {
+                ImageHeader::parse(chunk.data())
             }
+            _ => Err(Error::MissingImageHeader),
+        }
+    }
+
+    /// Decodes the whole image into the PNG's own pixel format; see [`Image`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`decode_into`](Self::decode_into).
+    pub fn decode(&mut self, data: &[u8]) -> Result<Image, Error> {
+        let mut pixels = Vec::new();
+        let header = self.decode_into(data, &mut pixels)?;
+        Ok(Image::new(header, header.stride()?, pixels))
+    }
+
+    /// Like [`decode`](Self::decode), but writes the pixels to `out` and returns
+    /// only the header. `out`'s old contents are replaced and its allocation is
+    /// reused, so passing the same buffer for many images avoids allocating one each
+    /// time. The layout is the same as [`Image::data`]. After an error, `out`'s
+    /// contents are unspecified.
+    ///
+    /// Chunks other than `IHDR` and `IDAT` are skipped for now, so indexed images
+    /// come back as palette indices and a missing `PLTE` isn't detected.
+    ///
+    /// # Errors
+    ///
+    /// - Any error from [`read_header`](Self::read_header).
+    /// - [`Error::MissingImageData`], [`Error::NonConsecutiveImageData`] or
+    ///   [`Error::MissingImageEnd`] if the `IDAT` and `IEND` chunks aren't laid
+    ///   out correctly.
+    /// - [`Error::Decompression`] if the zlib stream is corrupt.
+    /// - [`Error::ImageDataTooShort`] or [`Error::ImageDataTooLong`] if it doesn't
+    ///   decompress to the size the header requires.
+    /// - [`Error::InvalidFilterType`] if a scanline has an unknown filter type.
+    /// - [`Error::ImageTooLarge`] if the image doesn't fit in memory on this platform.
+    pub fn decode_into(&mut self, data: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
+        let mut chunks = self.chunks(data)?;
+        let header = Self::read_image_header(&mut chunks)?;
+        let scanline_size = header.scanline_size()?;
+
+        self.compressed.clear();
+        collect_image_data(&mut chunks, &mut self.compressed)?;
+
+        // The decompressor appends, so clear what the previous image left here.
+        self.scanlines.clear();
+        let output_size = self
+            .decompressor
+            .decompress_zlib_into_with(
+                &self.compressed,
+                &mut self.scanlines,
+                OutputOptions::exact(scanline_size),
+            )
+            .map_err(|e| match e {
+                rust_deflate::Error::OutputLimitExceeded => Error::ImageDataTooLong { expected: scanline_size },
+                _ => Error::Decompression(e)
+            })?;
+
+        if output_size < scanline_size {
+            return Err(Error::ImageDataTooShort { expected: scanline_size, actual: output_size });
         }
 
-        Err(Error::MissingImageHeader)
+        out.clear();
+        out.resize(header.image_size()?, 0);
+
+        match header.interlace {
+            Interlace::None => unfilter(&self.scanlines, header.stride()?, header.filter_bpp(), out)?,
+            Interlace::Adam7 => self.unfilter_adam7(&header, out)?,
+        }
+
+        Ok(header)
+    }
+
+    /// Unfilters each non-empty pass of `self.scanlines` into `self.pass` and
+    /// spreads it into `out`, the full image.
+    fn unfilter_adam7(&mut self, header: &ImageHeader, out: &mut [u8]) -> Result<(), Error> {
+        let bpp = header.filter_bpp();
+        let mut offset = 0;
+
+        for pass in &PASSES {
+            let (width, height) = pass.size(header.width, header.height);
+            let size = header.pass_scanline_size(width, height)?;
+            if size == 0 {
+                continue;
+            }
+
+            let row_bytes = header.row_bytes(width)?;
+            self.pass.clear();
+            self.pass.resize(row_bytes * height as usize, 0);
+
+            unfilter(&self.scanlines[offset..offset + size], row_bytes, bpp, &mut self.pass)?;
+            deinterlace_pass(header, pass, &self.pass, out);
+            offset += size;
+        }
+
+        Ok(())
     }
 }
 

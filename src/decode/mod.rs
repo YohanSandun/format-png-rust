@@ -1,6 +1,9 @@
 mod chunk_reader;
 mod decoder;
+mod deinterlace;
+mod image_data;
 mod options;
+mod unfilter;
 
 pub use chunk_reader::ChunkReader;
 pub use decoder::Decoder;

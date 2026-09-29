@@ -207,3 +207,264 @@ fn read_header_rejects_invalid_ihdr_contents() {
 
     assert_eq!(decoder.read_header(&data), Err(Error::InvalidColorType(5)));
 }
+
+// ---------- decode: helpers ----------
+
+fn chunk(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut out = (data.len() as u32).to_be_bytes().to_vec();
+    out.extend_from_slice(chunk_type);
+    out.extend_from_slice(data);
+    out.extend_from_slice(&crate::png::crc::crc32(chunk_type, data).to_be_bytes());
+    out
+}
+
+fn ihdr(width: u32, height: u32, bit_depth: u8, color_type: ColorType, interlace: Interlace) -> Vec<u8> {
+    let mut data = width.to_be_bytes().to_vec();
+    data.extend_from_slice(&height.to_be_bytes());
+    data.extend_from_slice(&[bit_depth, color_type as u8, 0, 0, interlace as u8]);
+    chunk(b"IHDR", &data)
+}
+
+/// Signature, then `chunks`.
+fn png_of(chunks: &[Vec<u8>]) -> Vec<u8> {
+    let mut data = SIGNATURE.to_vec();
+    for chunk in chunks {
+        data.extend_from_slice(chunk);
+    }
+    data
+}
+
+/// A complete PNG whose single IDAT holds `scanlines`, zlib-compressed.
+fn png(header: Vec<u8>, scanlines: &[u8]) -> Vec<u8> {
+    png_of(&[header, chunk(b"IDAT", &rust_deflate::compress_zlib(scanlines)), chunk(b"IEND", b"")])
+}
+
+fn rgba_1x1() -> Vec<u8> {
+    png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[0, 1, 2, 3, 4])
+}
+
+// ---------- decode: success ----------
+
+#[test]
+fn decode_1x1_rgba() {
+    let image = Decoder::new().decode(&rgba_1x1()).unwrap();
+
+    assert_eq!(*image.header(), rgba_1x1_header());
+    assert_eq!(image.stride(), 4);
+    assert_eq!(image.data(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn decode_reverses_filters() {
+    // 2x2 gray: row 0 uses Sub, row 1 uses Up
+    let data = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
+
+    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[10, 15, 11, 16]);
+}
+
+#[test]
+fn decode_keeps_sub_byte_pixels_packed() {
+    // 10x1 1-bit gray: 2 bytes per row, the last 6 bits padding
+    let data = png(ihdr(10, 1, 1, ColorType::Grayscale, Interlace::None), &[0, 0b1010_1010, 0b1100_0000]);
+    let image = Decoder::new().decode(&data).unwrap();
+
+    assert_eq!(image.stride(), 2);
+    assert_eq!(image.data(), &[0b1010_1010, 0b1100_0000]);
+}
+
+#[test]
+fn decode_keeps_16_bit_samples_big_endian() {
+    let data = png(ihdr(2, 1, 16, ColorType::Grayscale, Interlace::None), &[0, 0x12, 0x34, 0xAB, 0xCD]);
+
+    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[0x12, 0x34, 0xAB, 0xCD]);
+}
+
+#[test]
+fn decode_puts_adam7_passes_back_together() {
+    // 3x2 gray: pass 1 is (0, 0), pass 4 is (2, 0), pass 6 is (1, 0), pass 7 is row 1.
+    // Pass 7 uses Sub to check each pass is unfiltered on its own.
+    let scanlines = [0, 1, 0, 3, 0, 2, 1, 4, 1, 1];
+    let data = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &scanlines);
+    let image = Decoder::new().decode(&data).unwrap();
+
+    assert_eq!(image.header().interlace, Interlace::Adam7);
+    assert_eq!(image.data(), &[1, 2, 3, 4, 5, 6]);
+}
+
+#[test]
+fn decode_joins_split_idat_chunks() {
+    let compressed = rust_deflate::compress_zlib(&[0, 1, 2, 3, 4]);
+    let (first, rest) = compressed.split_at(3);
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"IDAT", first),
+        chunk(b"IDAT", b""),
+        chunk(b"IDAT", rest),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn decode_skips_ancillary_chunks() {
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"tEXt", b"Title\0x"),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 1, 2, 3, 4])),
+        chunk(b"ruSt", b"private"),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn decode_into_replaces_old_contents() {
+    let mut out = vec![0xEE; 100];
+
+    let header = Decoder::new().decode_into(&rgba_1x1(), &mut out).unwrap();
+
+    assert_eq!(header, rgba_1x1_header());
+    assert_eq!(out, [1, 2, 3, 4]);
+}
+
+#[test]
+fn decoder_and_buffer_can_be_reused_for_different_images() {
+    let mut decoder = Decoder::new();
+    let mut out = Vec::new();
+    let gray = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
+    let interlaced = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &[0, 1, 0, 3, 0, 2, 1, 4, 1, 1]);
+
+    decoder.decode_into(&gray, &mut out).unwrap();
+    assert_eq!(out, [10, 15, 11, 16]);
+
+    decoder.decode_into(&interlaced, &mut out).unwrap();
+    assert_eq!(out, [1, 2, 3, 4, 5, 6]);
+
+    decoder.decode_into(&rgba_1x1(), &mut out).unwrap();
+    assert_eq!(out, [1, 2, 3, 4]);
+}
+
+#[test]
+fn decode_still_works_after_a_failure() {
+    let mut decoder = Decoder::new();
+    let broken = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[9, 1, 2, 3, 4]);
+
+    assert!(decoder.decode(&broken).is_err());
+    assert_eq!(decoder.decode(&rgba_1x1()).unwrap().data(), &[1, 2, 3, 4]);
+}
+
+// ---------- decode: errors ----------
+
+#[test]
+fn decode_passes_on_header_errors() {
+    let mut decoder = Decoder::new();
+
+    assert_eq!(decoder.decode(b"not a png"), Err(Error::InvalidSignature));
+    assert_eq!(decoder.decode(&SIGNATURE), Err(Error::MissingImageHeader));
+}
+
+#[test]
+fn decode_rejects_missing_idat() {
+    let data = png_of(&[ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), chunk(b"IEND", b"")]);
+
+    assert_eq!(Decoder::new().decode(&data), Err(Error::MissingImageData));
+}
+
+#[test]
+fn decode_rejects_missing_iend() {
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 1, 2, 3, 4])),
+    ]);
+
+    assert_eq!(Decoder::new().decode(&data), Err(Error::MissingImageEnd));
+}
+
+#[test]
+fn decode_rejects_non_consecutive_idat() {
+    let compressed = rust_deflate::compress_zlib(&[0, 1, 2, 3, 4]);
+    let (first, rest) = compressed.split_at(3);
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"IDAT", first),
+        chunk(b"tEXt", b"Title\0x"),
+        chunk(b"IDAT", rest),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(Decoder::new().decode(&data), Err(Error::NonConsecutiveImageData));
+}
+
+#[test]
+fn decode_rejects_short_image_data() {
+    let data = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[0, 1, 2]);
+
+    assert_eq!(
+        Decoder::new().decode(&data),
+        Err(Error::ImageDataTooShort { expected: 5, actual: 3 })
+    );
+}
+
+#[test]
+fn decode_rejects_long_image_data() {
+    let data = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[0, 1, 2, 3, 4, 5]);
+
+    assert_eq!(Decoder::new().decode(&data), Err(Error::ImageDataTooLong { expected: 5 }));
+}
+
+#[test]
+fn decode_rejects_invalid_filter_type() {
+    let data = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[7, 1, 2, 3, 4]);
+
+    assert_eq!(Decoder::new().decode(&data), Err(Error::InvalidFilterType(7)));
+}
+
+#[test]
+fn decode_rejects_invalid_filter_type_in_adam7_pass() {
+    let scanlines = [0, 1, 0, 3, 0, 2, 9, 4, 1, 1];
+    let data = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &scanlines);
+
+    assert_eq!(Decoder::new().decode(&data), Err(Error::InvalidFilterType(9)));
+}
+
+#[test]
+fn decode_rejects_corrupt_zlib_stream() {
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"IDAT", &[0x78, 0x9C, 0xFF, 0xFF]),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert!(matches!(Decoder::new().decode(&data), Err(Error::Decompression(_))));
+}
+
+#[test]
+fn decode_rejects_wrong_adler32() {
+    let mut compressed = rust_deflate::compress_zlib(&[0, 1, 2, 3, 4]);
+    *compressed.last_mut().unwrap() ^= 0xFF;
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"IDAT", &compressed),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(
+        Decoder::new().decode(&data),
+        Err(Error::Decompression(rust_deflate::Error::ChecksumMismatch))
+    );
+}
+
+#[test]
+fn decode_checks_idat_crc_unless_turned_off() {
+    let mut data = rgba_1x1();
+    let iend = data.len() - 12;
+    data[iend - 1] ^= 0xFF; // last byte of the IDAT CRC
+
+    assert!(matches!(Decoder::new().decode(&data), Err(Error::CrcMismatch { .. })));
+    assert_eq!(
+        Decoder::with_options(lenient_options()).decode(&data).unwrap().data(),
+        &[1, 2, 3, 4]
+    );
+}
