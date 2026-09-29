@@ -54,7 +54,10 @@ impl Image {
     ///
     /// Panics if `y` is not less than [`height`](Self::height).
     pub fn row(&self, y: u32) -> &[u8] {
-        todo!()
+        assert!(y < self.height(), "row {y} is out of range for an image {} rows high", self.height());
+
+        let start = y as usize * self.stride;
+        &self.data[start..start + self.stride]
     }
 
     /// Consumes the image and returns its pixel data.
