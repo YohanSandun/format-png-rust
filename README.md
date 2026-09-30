@@ -193,6 +193,12 @@ The script sets pixel values with a formula, so the tests compute the expected
 pixels instead of storing reference images. The valid fixtures were checked
 against Pillow.
 
+To time decoding, see [benches/README.md](benches/README.md):
+
+```sh
+cargo bench --bench decode -- path/to/image.png
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

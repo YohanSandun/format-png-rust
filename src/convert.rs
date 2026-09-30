@@ -53,16 +53,88 @@ pub(crate) fn read_sample(row: &[u8], index: usize, bit_depth: u8) -> u16 {
     }
 }
 
+/// Converts one row of pixels to a format: the input row, and the output row to fill.
+type RowConverter = fn(&ImageHeader, PixelFormat, &[u8], &mut [u8]);
+
+/// Whether the pixels are already in `format`, so converting is a plain copy.
+/// 8-bit rows have no padding, so the data and the bitmap have the same layout.
+pub(crate) fn is_unchanged(header: &ImageHeader, format: PixelFormat) -> bool {
+    header.bit_depth == 8
+        && matches!(
+            (header.color_type, format),
+            (ColorType::Rgb, PixelFormat::Rgb8) | (ColorType::Rgba, PixelFormat::Rgba8)
+        )
+}
+
+/// Maps each pixel of `IN` bytes in `row` to a pixel of `OUT` bytes in `out`.
+/// With the sizes known at compile time, the compiler removes the bounds checks
+/// and can vectorize the loop.
+#[inline(always)]
+fn map_pixels<const IN: usize, const OUT: usize>(row: &[u8], out: &mut [u8], f: impl Fn(&[u8; IN]) -> [u8; OUT]) {
+    let (pixels, _) = row.as_chunks::<IN>();
+    let (out, _) = out.as_chunks_mut::<OUT>();
+    for (out, pixel) in out.iter_mut().zip(pixels) {
+        *out = f(pixel);
+    }
+}
+
+/// A [`RowConverter`] mapping pixels of `$in` bytes to pixels of `$out` bytes.
+macro_rules! map_row {
+    ($in:literal => $out:literal, |$pixel:ident| $body:expr) => {
+        |_, _, row, out| map_pixels::<$in, $out>(row, out, |$pixel| $body)
+    };
+}
+
+fn copy_row(_: &ImageHeader, _: PixelFormat, row: &[u8], out: &mut [u8]) {
+    out.copy_from_slice(&row[..out.len()]);
+}
+
+/// Picks the converter for a header and format once, so there is no per-pixel
+/// `match`. 8 and 16-bit images get a specialised loop each; 16-bit samples are
+/// big-endian, so their high byte is the first of each pair. Samples under 8 bits
+/// use the general [`convert_row_general`].
+fn row_converter(header: &ImageHeader, format: PixelFormat) -> RowConverter {
+    use ColorType::{Grayscale, GrayscaleAlpha, Rgb, Rgba};
+    use PixelFormat::{Rgb8, Rgba8};
+
+    match (header.bit_depth, header.color_type, format) {
+        (8, Grayscale, Rgba8) => map_row!(1 => 4, |p| [p[0], p[0], p[0], 255]),
+        (8, Grayscale, Rgb8) => map_row!(1 => 3, |p| [p[0]; 3]),
+        (8, GrayscaleAlpha, Rgba8) => map_row!(2 => 4, |p| [p[0], p[0], p[0], p[1]]),
+        (8, GrayscaleAlpha, Rgb8) => map_row!(2 => 3, |p| [p[0]; 3]),
+        (8, Rgb, Rgba8) => map_row!(3 => 4, |p| [p[0], p[1], p[2], 255]),
+        (8, Rgb, Rgb8) | (8, Rgba, Rgba8) => copy_row,
+        (8, Rgba, Rgb8) => map_row!(4 => 3, |p| [p[0], p[1], p[2]]),
+
+        (16, Grayscale, Rgba8) => map_row!(2 => 4, |p| [p[0], p[0], p[0], 255]),
+        (16, Grayscale, Rgb8) => map_row!(2 => 3, |p| [p[0]; 3]),
+        (16, GrayscaleAlpha, Rgba8) => map_row!(4 => 4, |p| [p[0], p[0], p[0], p[2]]),
+        (16, GrayscaleAlpha, Rgb8) => map_row!(4 => 3, |p| [p[0]; 3]),
+        (16, Rgb, Rgba8) => map_row!(6 => 4, |p| [p[0], p[2], p[4], 255]),
+        (16, Rgb, Rgb8) => map_row!(6 => 3, |p| [p[0], p[2], p[4]]),
+        (16, Rgba, Rgba8) => map_row!(8 => 4, |p| [p[0], p[2], p[4], p[6]]),
+        (16, Rgba, Rgb8) => map_row!(8 => 3, |p| [p[0], p[2], p[4]]),
+
+        _ => convert_row_general,
+    }
+}
+
 /// Converts one row. `row` is one row of `source.data` (`source.stride`
 /// bytes), and `out` is one output row, `width × format.bytes_per_pixel()` bytes.
 ///
 /// Returns `Error::MissingPalette` for indexed images.
+#[cfg(test)]
 pub(crate) fn convert_row(source: &Source<'_>, row: &[u8], format: PixelFormat, out: &mut [u8]) -> Result<(), Error> {
-    let header = source.header;
-    if header.color_type == ColorType::Indexed {
+    if source.header.color_type == ColorType::Indexed {
         return Err(Error::MissingPalette);
     }
+    row_converter(source.header, format)(source.header, format, row, out);
+    Ok(())
+}
 
+/// Converts one row of any bit depth, reading each sample separately. Slow, but
+/// it handles packed samples under 8 bits. Indexed images must be rejected first.
+fn convert_row_general(header: &ImageHeader, format: PixelFormat, row: &[u8], out: &mut [u8]) {
     let bit_depth = header.bit_depth;
     let channels = usize::from(header.color_type.channels());
     let bytes_per_pixel = format.bytes_per_pixel();
@@ -82,13 +154,11 @@ pub(crate) fn convert_row(source: &Source<'_>, row: &[u8], format: PixelFormat, 
             }
             ColorType::Rgb => [sample(x, 0), sample(x, 1), sample(x, 2), 255],
             ColorType::Rgba => [sample(x, 0), sample(x, 1), sample(x, 2), sample(x, 3)],
-            ColorType::Indexed => unreachable!("rejected above"),
+            ColorType::Indexed => unreachable!("rejected by the caller"),
         };
         // RGB is the first 3 bytes of RGBA, so this drops alpha for `Rgb8`.
         pixel.copy_from_slice(&rgba[..bytes_per_pixel]);
     }
-
-    Ok(())
 }
 
 /// Converts the whole image into `out`, replacing its contents and reusing its
@@ -105,12 +175,23 @@ pub(crate) fn convert(source: &Source<'_>, format: PixelFormat, out: &mut Vec<u8
         .ok_or(Error::ImageTooLarge)?;
     let bitmap_size = bitmap_stride.checked_mul(height).ok_or(Error::ImageTooLarge)?;
 
+    let header = source.header;
+    if header.color_type == ColorType::Indexed {
+        return Err(Error::MissingPalette);
+    }
+
     out.clear();
+    if is_unchanged(header, format) {
+        // One copy of the whole image, without zeroing `out` first.
+        out.extend_from_slice(&source.data[..bitmap_size]);
+        return Ok(());
+    }
     out.resize(bitmap_size, 0);
 
+    let convert_row = row_converter(header, format);
     let rows = source.data.chunks_exact(source.stride);
     for (row, out_row) in rows.zip(out.chunks_exact_mut(bitmap_stride)) {
-        convert_row(source, row, format, out_row)?;
+        convert_row(header, format, row, out_row);
     }
 
     Ok(())

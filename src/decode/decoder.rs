@@ -5,7 +5,7 @@ use crate::decode::image_data::collect_image_data;
 use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
-use crate::convert::{Source, convert};
+use crate::convert::{Source, convert, is_unchanged};
 use crate::png::{Bitmap, ChunkType, Image, ImageHeader, Interlace, PixelFormat};
 use rust_deflate::{Decompressor, OutputOptions};
 
@@ -212,6 +212,11 @@ impl Decoder {
     /// - Any error from [`Image::to_bitmap`], such as [`Error::MissingPalette`]
     ///   for indexed images.
     pub fn decode_bitmap_into(&mut self, data: &[u8], format: PixelFormat, out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
+        // 8-bit RGB or RGBA already has the bitmap's layout, so decode straight into `out`.
+        if is_unchanged(&self.read_header(data)?, format) {
+            return self.decode_into(data, out);
+        }
+
         // `decode_into` borrows all of `self`, so the pixel buffer is taken out
         // for the call and put back afterwards, even on error.
         let mut pixels = std::mem::take(&mut self.pixels);

@@ -12,8 +12,31 @@ const PREVIOUS: [u8; 6] = [10, 200, 30, 250, 5, 128];
 const ROW: [u8; 6] = [20, 100, 255, 3, 250, 64];
 
 fn unfiltered(filter_type: FilterType, bpp: usize, previous: Option<&[u8]>, filtered: &[u8]) -> Vec<u8> {
+    let mut row = vec![0; filtered.len()];
+    unfilter_row(filter_type, bpp, previous, filtered, &mut row);
+    row
+}
+
+/// The filters exactly as the PNG spec describes them, one byte at a time.
+fn reference(filter_type: FilterType, bpp: usize, previous: Option<&[u8]>, filtered: &[u8]) -> Vec<u8> {
     let mut row = filtered.to_vec();
-    unfilter_row(filter_type, bpp, previous, &mut row);
+    for i in 0..row.len() {
+        let a = if i >= bpp { row[i - bpp] } else { 0 };
+        let b = previous.map_or(0, |p| p[i]);
+        let c = previous.map_or(0, |p| if i >= bpp { p[i - bpp] } else { 0 });
+        let predictor = match filter_type {
+            FilterType::None => 0,
+            FilterType::Sub => a,
+            FilterType::Up => b,
+            FilterType::Average => ((u16::from(a) + u16::from(b)) / 2) as u8,
+            FilterType::Paeth => {
+                let p = i16::from(a) + i16::from(b) - i16::from(c);
+                let (pa, pb, pc) = ((p - i16::from(a)).abs(), (p - i16::from(b)).abs(), (p - i16::from(c)).abs());
+                if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c }
+            }
+        };
+        row[i] = row[i].wrapping_add(predictor);
+    }
     row
 }
 
@@ -123,6 +146,46 @@ fn unfilter_row_shorter_than_bpp() {
 
     assert_eq!(unfiltered(FilterType::Sub, 8, Some(&previous), &[9; 8]), [9; 8]);
     assert_eq!(unfiltered(FilterType::Paeth, 8, Some(&previous), &[0; 8]), previous);
+}
+
+// ---------- unfilter_row, against the reference ----------
+
+#[test]
+fn every_filter_and_bpp_matches_the_reference() {
+    let filters = [FilterType::None, FilterType::Sub, FilterType::Up, FilterType::Average, FilterType::Paeth];
+
+    for bpp in [1, 2, 3, 4, 6, 8] {
+        // 7 pixels of bytes spread over the whole range, including 0 and 255.
+        let len = bpp * 7;
+        let previous: Vec<u8> = (0..len).map(|i| (i * 97 + 255) as u8).collect();
+        let filtered: Vec<u8> = (0..len).map(|i| (i * 53 + 128) as u8).collect();
+
+        for filter_type in filters {
+            for previous in [None, Some(previous.as_slice())] {
+                assert_eq!(
+                    unfiltered(filter_type, bpp, previous, &filtered),
+                    reference(filter_type, bpp, previous, &filtered),
+                    "{filter_type:?}, bpp {bpp}, previous row: {}",
+                    previous.is_some(),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn paeth_matches_the_spec_for_every_input() {
+    for a in 0..=255_i16 {
+        for b in 0..=255_i16 {
+            for c in 0..=255_i16 {
+                let p = a + b - c;
+                let (pa, pb, pc) = ((p - a).abs(), (p - b).abs(), (p - c).abs());
+                let expected = if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c };
+
+                assert_eq!(i16::from(paeth_predictor(a as u8, b as u8, c as u8)), expected, "a {a}, b {b}, c {c}");
+            }
+        }
+    }
 }
 
 // ---------- unfilter ----------

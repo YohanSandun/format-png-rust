@@ -5,3 +5,8 @@ edition = "2024"
 
 [dependencies]
 rust-deflate = "0.4.0"
+
+# A plain program with its own `main`; see benches/README.md.
+[[bench]]
+name = "decode"
+harness = false

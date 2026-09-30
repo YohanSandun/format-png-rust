@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use super::{Source, convert, convert_row, read_sample, scale_to_8};
+use super::{Source, convert, convert_row, convert_row_general, is_unchanged, read_sample, scale_to_8};
 use crate::error::Error;
 use crate::png::{ColorType, ImageHeader, Interlace, PixelFormat};
 
@@ -247,6 +247,66 @@ fn convert_reads_each_row_at_the_stride() {
     convert(&source, PixelFormat::Rgb8, &mut out).unwrap();
 
     assert_eq!(out, data);
+}
+
+// ---------- fast paths ----------
+
+#[test]
+fn fast_paths_match_the_general_converter() {
+    let color_types = [ColorType::Grayscale, ColorType::GrayscaleAlpha, ColorType::Rgb, ColorType::Rgba];
+
+    for bit_depth in [8, 16] {
+        for color_type in color_types {
+            for format in [PixelFormat::Rgb8, PixelFormat::Rgba8] {
+                // 5 pixels, with every byte different so a wrong offset shows up.
+                let header = header(5, 1, bit_depth, color_type);
+                let stride = header.stride().unwrap();
+                let row: Vec<u8> = (0..stride).map(|i| (i * 37 + 11) as u8).collect();
+
+                let fast = row_to(header, &row, format).unwrap();
+                let mut general = vec![0; 5 * format.bytes_per_pixel()];
+                convert_row_general(&header, format, &row, &mut general);
+
+                assert_eq!(fast, general, "{bit_depth}-bit {color_type:?} to {format:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn only_8_bit_rgb_and_rgba_are_unchanged() {
+    assert!(is_unchanged(&header(1, 1, 8, ColorType::Rgb), PixelFormat::Rgb8));
+    assert!(is_unchanged(&header(1, 1, 8, ColorType::Rgba), PixelFormat::Rgba8));
+
+    assert!(!is_unchanged(&header(1, 1, 8, ColorType::Rgb), PixelFormat::Rgba8));
+    assert!(!is_unchanged(&header(1, 1, 8, ColorType::Rgba), PixelFormat::Rgb8));
+    assert!(!is_unchanged(&header(1, 1, 16, ColorType::Rgba), PixelFormat::Rgba8));
+    assert!(!is_unchanged(&header(1, 1, 8, ColorType::Grayscale), PixelFormat::Rgb8));
+}
+
+#[test]
+fn convert_copies_unchanged_images_whole() {
+    let header = header(2, 2, 8, ColorType::Rgba);
+    let data: Vec<u8> = (0..16).collect();
+    let source = Source { header: &header, stride: 8, data: &data };
+    let mut out = vec![0xEE; 3];
+
+    convert(&source, PixelFormat::Rgba8, &mut out).unwrap();
+
+    assert_eq!(out, data);
+}
+
+#[test]
+fn convert_16_bit_rows() {
+    // 1x2 RGB 16-bit
+    let header = header(1, 2, 16, ColorType::Rgb);
+    let data = [0x10, 0, 0x20, 0, 0x30, 0, 0x40, 0, 0x50, 0, 0x60, 0];
+    let source = Source { header: &header, stride: 6, data: &data };
+    let mut out = Vec::new();
+
+    convert(&source, PixelFormat::Rgba8, &mut out).unwrap();
+
+    assert_eq!(out, [0x10, 0x20, 0x30, 255, 0x40, 0x50, 0x60, 255]);
 }
 
 #[test]
