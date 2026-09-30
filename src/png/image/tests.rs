@@ -2,7 +2,7 @@
 
 use super::Image;
 use crate::error::Error;
-use crate::png::{ColorType, ImageHeader, Interlace, PixelFormat};
+use crate::png::{ColorType, ImageHeader, Interlace, Palette, PixelFormat};
 
 /// 2x3 RGB, 8-bit: 6 bytes per row.
 fn image() -> Image {
@@ -13,7 +13,20 @@ fn image() -> Image {
         color_type: ColorType::Rgb,
         interlace: Interlace::None,
     };
-    Image::new(header, 6, (0..18).collect())
+    Image::new(header, 6, (0..18).collect(), None)
+}
+
+/// 3x1 indexed, 8-bit, with `pixels` as indices into a 2-color palette.
+fn indexed_image(pixels: [u8; 3]) -> Image {
+    let header = ImageHeader {
+        width: 3,
+        height: 1,
+        bit_depth: 8,
+        color_type: ColorType::Indexed,
+        interlace: Interlace::None,
+    };
+    let palette = Palette::parse(&[10, 20, 30, 40, 50, 60], &header).unwrap();
+    Image::new(header, 3, pixels.to_vec(), Some(palette))
 }
 
 #[test]
@@ -65,15 +78,30 @@ fn to_bitmap_rgb_of_rgb_image_is_unchanged() {
 }
 
 #[test]
-fn to_bitmap_of_indexed_image_needs_a_palette() {
-    let header = ImageHeader {
-        width: 2,
-        height: 1,
-        bit_depth: 8,
-        color_type: ColorType::Indexed,
-        interlace: Interlace::None,
-    };
-    let image = Image::new(header, 2, vec![0, 1]);
+fn palette_is_none_without_plte() {
+    assert_eq!(image().palette(), None);
+}
 
-    assert_eq!(image.to_bitmap(PixelFormat::Rgba8), Err(Error::MissingPalette));
+#[test]
+fn palette_of_indexed_image() {
+    let image = indexed_image([0, 1, 0]);
+
+    assert_eq!(image.palette().map(Palette::colors), Some(&[[10, 20, 30], [40, 50, 60]][..]));
+}
+
+#[test]
+fn to_bitmap_of_indexed_image_uses_the_palette() {
+    let bitmap = indexed_image([1, 0, 1]).to_bitmap(PixelFormat::Rgb8).unwrap();
+
+    assert_eq!(bitmap.data(), &[40, 50, 60, 10, 20, 30, 40, 50, 60]);
+}
+
+#[test]
+fn to_bitmap_of_indexed_image_rejects_index_past_the_palette() {
+    let image = indexed_image([0, 2, 1]);
+
+    assert_eq!(
+        image.to_bitmap(PixelFormat::Rgba8),
+        Err(Error::PaletteIndexOutOfRange { index: 2, entries: 2 })
+    );
 }

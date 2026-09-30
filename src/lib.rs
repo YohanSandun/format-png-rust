@@ -27,7 +27,8 @@
 //!   working buffers between them, and [`Decoder::decode_bitmap_into`] and
 //!   [`Decoder::decode_into`] also reuse your output buffer.
 //! - [`decode`] returns an [`Image`] in the file's own pixel format, without
-//!   conversion: 16-bit samples, packed pixels under 8 bits, and palette indices.
+//!   conversion: 16-bit samples, packed pixels under 8 bits, and palette indices
+//!   with their [`Palette`].
 //! - [`read_header`] reads only the image header.
 //! - A [`ChunkReader`] returns every chunk raw, including ancillary, private and
 //!   unknown ones. Chunk types are in the [`png`] module.
@@ -43,10 +44,8 @@
 //!
 //! # Not supported yet
 //!
-//! `PLTE` and `tRNS` aren't read, so indexed images can't be converted to colors
-//! ([`Error::MissingPalette`]) and `tRNS` transparency isn't applied. Other
-//! ancillary chunks are skipped by the decoder, but a [`ChunkReader`] still
-//! returns them.
+//! `tRNS` isn't read, so its transparency isn't applied. Other ancillary chunks
+//! are skipped by the decoder, but a [`ChunkReader`] still returns them.
 
 pub mod png;
 mod convert;
@@ -56,7 +55,7 @@ mod error;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use error::Error;
-pub use png::{Bitmap, ColorType, Image, ImageHeader, Interlace, PixelFormat};
+pub use png::{Bitmap, ColorType, Image, ImageHeader, Interlace, Palette, PixelFormat};
 
 /// Decodes a PNG to 8-bit RGBA, ready for a browser canvas's `ImageData`.
 ///

@@ -1,8 +1,7 @@
 //! Converts the fixtures in tests/data to RGB and RGBA bitmaps.
 //!
-//! `PLTE` and `tRNS` aren't read yet: indexed fixtures must fail with
-//! `MissingPalette`, and `*_trns` fixtures are skipped so these tests don't pin
-//! down transparency behavior that will change.
+//! `tRNS` isn't read yet, so `*_trns` fixtures are skipped so these tests don't
+//! pin down transparency behavior that will change.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +29,12 @@ fn sample(x: u32, y: u32, channel: u32, bit_depth: u8) -> u32 {
     (x * 37 + y * 101 + channel * 53) % (1 << bit_depth)
 }
 
+/// The color generate.py's `palette()` gives pixel (x, y) of an indexed image.
+fn palette_color(x: u32, y: u32, bit_depth: u8) -> [u8; 3] {
+    let i = (x + 3 * y) % (1 << bit_depth);
+    [(i * 67 % 256) as u8, (i * 131 % 256) as u8, (i * 199 % 256) as u8]
+}
+
 /// The conversion rules from `Image::to_bitmap`, for one sample.
 fn to_8_bits(value: u32, bit_depth: u8) -> u8 {
     match bit_depth {
@@ -47,7 +52,10 @@ fn expected_rgba(header: &ImageHeader, x: u32, y: u32) -> [u8; 4] {
         ColorType::GrayscaleAlpha => [s(0), s(0), s(0), s(1)],
         ColorType::Rgb => [s(0), s(1), s(2), 255],
         ColorType::Rgba => [s(0), s(1), s(2), s(3)],
-        ColorType::Indexed => unreachable!("indexed fixtures are checked separately"),
+        ColorType::Indexed => {
+            let [r, g, b] = palette_color(x, y, header.bit_depth);
+            [r, g, b, 255]
+        }
     }
 }
 
@@ -70,8 +78,7 @@ fn convertible_fixtures() -> impl Iterator<Item = (PathBuf, Vec<u8>, ImageHeader
     fixtures().into_iter().filter_map(|path| {
         let data = fs::read(&path).unwrap();
         let header = format_png::read_header(&data).unwrap();
-        let skip = header.color_type == ColorType::Indexed || name(&path).contains("_trns");
-        (!skip).then_some((path, data, header))
+        (!name(&path).contains("_trns")).then_some((path, data, header))
     })
 }
 
@@ -119,16 +126,22 @@ fn reused_decoder_matches_the_simple_api() {
 }
 
 #[test]
-fn indexed_fixtures_need_a_palette() {
-    let mut indexed = 0;
-    for path in fixtures() {
-        let data = fs::read(&path).unwrap();
-        if format_png::read_header(&data).unwrap().color_type != ColorType::Indexed {
-            continue;
-        }
-        indexed += 1;
+fn indexed_fixtures_are_converted() {
+    // Guards against the loops above quietly skipping every indexed fixture.
+    let indexed = convertible_fixtures().filter(|(_, _, header)| header.color_type == ColorType::Indexed).count();
 
-        assert_eq!(format_png::decode_rgba8(&data), Err(Error::MissingPalette), "{}", name(&path));
-    }
-    assert!(indexed > 0);
+    assert_eq!(indexed, 8);
+}
+
+#[test]
+fn index_past_the_palette_fails_to_convert() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/invalid/indexed_index_out_of_range.png");
+    let data = fs::read(path).unwrap();
+
+    // The indices decode; only converting them to colors fails.
+    assert!(format_png::decode(&data).is_ok());
+    assert_eq!(
+        format_png::decode_rgba8(&data),
+        Err(Error::PaletteIndexOutOfRange { index: 16, entries: 16 })
+    );
 }

@@ -6,7 +6,7 @@ use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
 use crate::convert::{Source, convert, is_unchanged};
-use crate::png::{Bitmap, ChunkType, Image, ImageHeader, Interlace, PixelFormat};
+use crate::png::{Bitmap, ChunkType, Image, ImageHeader, Interlace, Palette, PixelFormat};
 use rust_deflate::{Decompressor, OutputOptions};
 
 /// A reusable PNG decoder.
@@ -43,6 +43,8 @@ pub struct Decoder {
     pass: Vec<u8>,
     /// The decoded image in its own format, before it's converted to a bitmap.
     pixels: Vec<u8>,
+    /// The `PLTE` palette of the last image decoded, if it had one.
+    palette: Option<Palette>,
 }
 
 impl Decoder {
@@ -66,12 +68,20 @@ impl Decoder {
             scanlines: Vec::new(),
             pass: Vec::new(),
             pixels: Vec::new(),
+            palette: None,
         }
     }
 
     /// The options this decoder was created with.
     pub fn options(&self) -> &DecodeOptions {
         &self.options
+    }
+
+    /// The `PLTE` palette of the last image decoded with [`decode_into`](Self::decode_into)
+    /// or another decode method, or `None` if it had none or decoding failed.
+    /// Indexed images always have one; see [`Image::palette`].
+    pub fn palette(&self) -> Option<&Palette> {
+        self.palette.as_ref()
     }
 
     /// Consumes the decoder and returns its decompressor, to reuse elsewhere.
@@ -120,7 +130,7 @@ impl Decoder {
     pub fn decode(&mut self, data: &[u8]) -> Result<Image, Error> {
         let mut pixels = Vec::new();
         let header = self.decode_into(data, &mut pixels)?;
-        Ok(Image::new(header, header.stride()?, pixels))
+        Ok(Image::new(header, header.stride()?, pixels, self.palette.clone()))
     }
 
     /// Like [`decode`](Self::decode), but writes the pixels to `out` and returns
@@ -129,8 +139,8 @@ impl Decoder {
     /// time. The layout is the same as [`Image::data`]. After an error, `out`'s
     /// contents are unspecified.
     ///
-    /// Chunks other than `IHDR` and `IDAT` are skipped for now, so indexed images
-    /// come back as palette indices and a missing `PLTE` isn't detected.
+    /// Indexed images come back as palette indices; the palette is then available
+    /// from [`palette`](Self::palette). Ancillary chunks are skipped for now.
     ///
     /// # Errors
     ///
@@ -138,18 +148,26 @@ impl Decoder {
     /// - [`Error::MissingImageData`], [`Error::NonConsecutiveImageData`] or
     ///   [`Error::MissingImageEnd`] if the `IDAT` and `IEND` chunks aren't laid
     ///   out correctly.
+    /// - [`Error::MissingPalette`] if an indexed image has no `PLTE` before its
+    ///   image data, and [`Error::PaletteAfterImageData`] or
+    ///   [`Error::DuplicatePalette`] if `PLTE` is misplaced or repeated.
+    /// - [`Error::InvalidPaletteLength`], [`Error::TooManyPaletteEntries`] or
+    ///   [`Error::UnexpectedPalette`] if the `PLTE` chunk is invalid.
     /// - [`Error::Decompression`] if the zlib stream is corrupt.
     /// - [`Error::ImageDataTooShort`] or [`Error::ImageDataTooLong`] if it doesn't
     ///   decompress to the size the header requires.
     /// - [`Error::InvalidFilterType`] if a scanline has an unknown filter type.
     /// - [`Error::ImageTooLarge`] if the image doesn't fit in memory on this platform.
     pub fn decode_into(&mut self, data: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
+        // Cleared first, so a failed decode doesn't leave the last image's palette.
+        self.palette = None;
+
         let mut chunks = self.chunks(data)?;
         let header = Self::read_image_header(&mut chunks)?;
         let scanline_size = header.scanline_size()?;
 
         self.compressed.clear();
-        collect_image_data(&mut chunks, &mut self.compressed)?;
+        let found = collect_image_data(&mut chunks, &header, &mut self.compressed)?;
 
         // The decompressor appends, so clear what the previous image left here.
         self.scanlines.clear();
@@ -177,6 +195,7 @@ impl Decoder {
             Interlace::Adam7 => self.unfilter_adam7(&header, out)?,
         }
 
+        self.palette = found.palette;
         Ok(header)
     }
 
@@ -209,7 +228,7 @@ impl Decoder {
     /// # Errors
     ///
     /// - Any error from [`decode_into`](Self::decode_into).
-    /// - Any error from [`Image::to_bitmap`], such as [`Error::MissingPalette`]
+    /// - Any error from [`Image::to_bitmap`], such as [`Error::PaletteIndexOutOfRange`]
     ///   for indexed images.
     pub fn decode_bitmap_into(&mut self, data: &[u8], format: PixelFormat, out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
         // 8-bit RGB or RGBA already has the bitmap's layout, so decode straight into `out`.
@@ -222,7 +241,12 @@ impl Decoder {
         let mut pixels = std::mem::take(&mut self.pixels);
 
         let result = self.decode_into(data, &mut pixels).and_then(|header| {
-            let source = Source { header: &header, stride: header.stride()?, data: &pixels };
+            let source = Source {
+                header: &header,
+                stride: header.stride()?,
+                data: &pixels,
+                palette: self.palette.as_ref(),
+            };
             convert(&source, format, out)?;
             Ok(header)
         });

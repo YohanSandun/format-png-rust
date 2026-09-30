@@ -73,8 +73,27 @@ pub enum Error {
     /// The decoded image is too large to address with `usize` on this platform.
     ImageTooLarge,
 
-    /// An indexed image can't be converted to colors without its `PLTE` palette.
+    /// An indexed image has no `PLTE` chunk before its image data.
     MissingPalette,
+
+    /// The `PLTE` chunk's length isn't a multiple of 3, or it doesn't hold 1 to
+    /// 256 entries. The value is the chunk's length in bytes.
+    InvalidPaletteLength(usize),
+
+    /// An indexed image's palette has more entries than its bit depth can index.
+    TooManyPaletteEntries { entries: usize, bit_depth: u8 },
+
+    /// A grayscale image has a `PLTE` chunk, which isn't allowed.
+    UnexpectedPalette(ColorType),
+
+    /// There is more than one `PLTE` chunk.
+    DuplicatePalette,
+
+    /// The `PLTE` chunk comes after the image data.
+    PaletteAfterImageData,
+
+    /// A pixel of an indexed image refers to a palette entry that doesn't exist.
+    PaletteIndexOutOfRange { index: u8, entries: usize },
 }
 
 impl fmt::Display for Error {
@@ -115,7 +134,19 @@ impl fmt::Display for Error {
             }
             Error::InvalidFilterType(value) => write!(f, "invalid filter type {value}"),
             Error::ImageTooLarge => f.write_str("image is too large for this platform"),
-            Error::MissingPalette => f.write_str("indexed image has no palette"),
+            Error::MissingPalette => f.write_str("indexed image has no PLTE chunk"),
+            Error::InvalidPaletteLength(length) => {
+                write!(f, "PLTE length is {length}, expected a multiple of 3 from 3 to 768")
+            }
+            Error::TooManyPaletteEntries { entries, bit_depth } => {
+                write!(f, "palette has {entries} entries, more than {bit_depth}-bit indices can reach")
+            }
+            Error::UnexpectedPalette(color_type) => write!(f, "PLTE chunk is not allowed for color type {color_type:?}"),
+            Error::DuplicatePalette => f.write_str("more than one PLTE chunk"),
+            Error::PaletteAfterImageData => f.write_str("PLTE chunk comes after IDAT"),
+            Error::PaletteIndexOutOfRange { index, entries } => {
+                write!(f, "palette index {index} is out of range for a palette of {entries} entries")
+            }
         }
     }
 }

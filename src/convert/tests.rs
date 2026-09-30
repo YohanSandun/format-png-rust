@@ -1,8 +1,11 @@
 #![cfg(test)]
 
-use super::{Source, convert, convert_row, convert_row_general, is_unchanged, read_sample, scale_to_8};
+use super::{
+    Source, convert, convert_indexed_row, convert_row, convert_row_general, is_unchanged, palette_table, read_sample,
+    scale_to_8,
+};
 use crate::error::Error;
-use crate::png::{ColorType, ImageHeader, Interlace, PixelFormat};
+use crate::png::{ColorType, ImageHeader, Interlace, Palette, PixelFormat};
 
 fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType) -> ImageHeader {
     ImageHeader { width, height, bit_depth, color_type, interlace: Interlace::None }
@@ -10,7 +13,7 @@ fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType) -> Imag
 
 /// Converts a single row, with `row` as the whole image.
 fn row_to(header: ImageHeader, row: &[u8], format: PixelFormat) -> Result<Vec<u8>, Error> {
-    let source = Source { header: &header, stride: row.len(), data: row };
+    let source = Source { header: &header, stride: row.len(), data: row, palette: None };
     let mut out = vec![0; header.width as usize * format.bytes_per_pixel()];
     convert_row(&source, row, format, &mut out)?;
     Ok(out)
@@ -197,6 +200,110 @@ fn gray_alpha_to_rgb_drops_alpha() {
 
 // ---------- convert_row: indexed ----------
 
+/// A palette of `colors`, parsed as for an 8-bit indexed image.
+fn palette(colors: &[[u8; 3]]) -> Palette {
+    Palette::parse(colors.as_flattened(), &header(1, 1, 8, ColorType::Indexed)).unwrap()
+}
+
+/// Converts one indexed row with `palette`.
+fn indexed_row_to(width: u32, bit_depth: u8, palette: &Palette, row: &[u8], format: PixelFormat) -> Result<Vec<u8>, Error> {
+    let header = header(width, 1, bit_depth, ColorType::Indexed);
+    let source = Source { header: &header, stride: row.len(), data: row, palette: Some(palette) };
+    let mut out = vec![0; width as usize * format.bytes_per_pixel()];
+    convert_row(&source, row, format, &mut out)?;
+    Ok(out)
+}
+
+const COLORS: [[u8; 3]; 4] = [[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]];
+
+#[test]
+fn palette_table_holds_the_colors_with_opaque_alpha() {
+    let table = palette_table(&palette(&COLORS));
+
+    assert_eq!(table[0], [10, 20, 30, 255]);
+    assert_eq!(table[3], [100, 110, 120, 255]);
+}
+
+#[test]
+fn palette_table_past_the_end_is_opaque_black() {
+    let table = palette_table(&palette(&COLORS));
+
+    assert!(table[4..].iter().all(|&entry| entry == [0, 0, 0, 255]));
+}
+
+#[test]
+fn indexed_8_to_rgba() {
+    let out = indexed_row_to(3, 8, &palette(&COLORS), &[2, 0, 3], PixelFormat::Rgba8);
+
+    assert_eq!(out, Ok(vec![70, 80, 90, 255, 10, 20, 30, 255, 100, 110, 120, 255]));
+}
+
+#[test]
+fn indexed_8_to_rgb() {
+    let out = indexed_row_to(2, 8, &palette(&COLORS), &[1, 1], PixelFormat::Rgb8);
+
+    assert_eq!(out, Ok(vec![40, 50, 60, 40, 50, 60]));
+}
+
+#[test]
+fn indexed_1_bit() {
+    // 3 pixels 1, 0, 1, then padding.
+    let out = indexed_row_to(3, 1, &palette(&COLORS[..2]), &[0b1010_0000], PixelFormat::Rgb8);
+
+    assert_eq!(out, Ok(vec![40, 50, 60, 10, 20, 30, 40, 50, 60]));
+}
+
+#[test]
+fn indexed_padding_bits_are_not_indices() {
+    // 3 pixels of index 0 with a 1-color palette. The padding bits are set, so
+    // reading them as indices would fail with index 1.
+    let out = indexed_row_to(3, 1, &palette(&COLORS[..1]), &[0b0001_1111], PixelFormat::Rgb8);
+
+    assert_eq!(out, Ok(vec![10, 20, 30, 10, 20, 30, 10, 20, 30]));
+}
+
+#[test]
+fn indexed_2_bit() {
+    let out = indexed_row_to(4, 2, &palette(&COLORS), &[0b11_10_01_00], PixelFormat::Rgb8);
+
+    assert_eq!(out, Ok(COLORS.iter().rev().flatten().copied().collect()));
+}
+
+#[test]
+fn indexed_4_bit_across_bytes() {
+    // 3 pixels 1, 3, 2, then 4 bits of padding.
+    let out = indexed_row_to(3, 4, &palette(&COLORS), &[0x13, 0x2F], PixelFormat::Rgba8);
+
+    assert_eq!(out, Ok(vec![40, 50, 60, 255, 100, 110, 120, 255, 70, 80, 90, 255]));
+}
+
+#[test]
+fn indexed_index_past_the_palette_fails() {
+    let out = indexed_row_to(3, 8, &palette(&COLORS[..2]), &[0, 1, 2], PixelFormat::Rgba8);
+
+    assert_eq!(out, Err(Error::PaletteIndexOutOfRange { index: 2, entries: 2 }));
+}
+
+#[test]
+fn indexed_sub_byte_index_past_the_palette_fails() {
+    // A 2-bit index of 3 with a 3-color palette.
+    let out = indexed_row_to(2, 2, &palette(&COLORS[..3]), &[0b00_11_00_00], PixelFormat::Rgb8);
+
+    assert_eq!(out, Err(Error::PaletteIndexOutOfRange { index: 3, entries: 3 }));
+}
+
+#[test]
+fn indexed_row_with_every_8_bit_index() {
+    let colors: Vec<[u8; 3]> = (0..=255u8).map(|i| [i, !i, i / 2]).collect();
+    let row: Vec<u8> = (0..=255).collect();
+    let table = palette_table(&palette(&colors));
+    let mut out = vec![0; 256 * 3];
+
+    convert_indexed_row(&table, 256, 8, PixelFormat::Rgb8, &row, &mut out).unwrap();
+
+    assert_eq!(out, colors.as_flattened());
+}
+
 #[test]
 fn indexed_needs_a_palette() {
     for format in [PixelFormat::Rgb8, PixelFormat::Rgba8] {
@@ -213,7 +320,7 @@ fn convert_packs_rows_without_padding() {
     // 10x2 1-bit gray: 2 bytes per source row, 40 bytes per RGBA row
     let header = header(10, 2, 1, ColorType::Grayscale);
     let data = [0b1000_0000, 0b0100_0000, 0b0000_0000, 0b0000_0000];
-    let source = Source { header: &header, stride: 2, data: &data };
+    let source = Source { header: &header, stride: 2, data: &data, palette: None };
     let mut out = Vec::new();
 
     convert(&source, PixelFormat::Rgba8, &mut out).unwrap();
@@ -228,7 +335,7 @@ fn convert_packs_rows_without_padding() {
 #[test]
 fn convert_replaces_old_contents() {
     let header = header(1, 1, 8, ColorType::Rgb);
-    let source = Source { header: &header, stride: 3, data: &[7, 8, 9] };
+    let source = Source { header: &header, stride: 3, data: &[7, 8, 9], palette: None };
     let mut out = vec![0xEE; 64];
 
     convert(&source, PixelFormat::Rgba8, &mut out).unwrap();
@@ -241,7 +348,7 @@ fn convert_reads_each_row_at_the_stride() {
     // 2x2 RGB with rows of 6 bytes
     let header = header(2, 2, 8, ColorType::Rgb);
     let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    let source = Source { header: &header, stride: 6, data: &data };
+    let source = Source { header: &header, stride: 6, data: &data, palette: None };
     let mut out = Vec::new();
 
     convert(&source, PixelFormat::Rgb8, &mut out).unwrap();
@@ -288,7 +395,7 @@ fn only_8_bit_rgb_and_rgba_are_unchanged() {
 fn convert_copies_unchanged_images_whole() {
     let header = header(2, 2, 8, ColorType::Rgba);
     let data: Vec<u8> = (0..16).collect();
-    let source = Source { header: &header, stride: 8, data: &data };
+    let source = Source { header: &header, stride: 8, data: &data, palette: None };
     let mut out = vec![0xEE; 3];
 
     convert(&source, PixelFormat::Rgba8, &mut out).unwrap();
@@ -301,7 +408,7 @@ fn convert_16_bit_rows() {
     // 1x2 RGB 16-bit
     let header = header(1, 2, 16, ColorType::Rgb);
     let data = [0x10, 0, 0x20, 0, 0x30, 0, 0x40, 0, 0x50, 0, 0x60, 0];
-    let source = Source { header: &header, stride: 6, data: &data };
+    let source = Source { header: &header, stride: 6, data: &data, palette: None };
     let mut out = Vec::new();
 
     convert(&source, PixelFormat::Rgba8, &mut out).unwrap();
@@ -310,9 +417,46 @@ fn convert_16_bit_rows() {
 }
 
 #[test]
+fn convert_indexed_image() {
+    // 2x2 4-bit indexed: 1 byte per row, the second pixel of each row in the low bits.
+    let header = header(2, 2, 4, ColorType::Indexed);
+    let palette = palette(&COLORS);
+    let source = Source { header: &header, stride: 1, data: &[0x01, 0x23], palette: Some(&palette) };
+    let mut out = Vec::new();
+
+    convert(&source, PixelFormat::Rgb8, &mut out).unwrap();
+
+    assert_eq!(out, COLORS.as_flattened());
+}
+
+#[test]
+fn convert_indexed_passes_on_index_errors() {
+    let header = header(1, 2, 8, ColorType::Indexed);
+    let palette = palette(&COLORS);
+    let source = Source { header: &header, stride: 1, data: &[0, 9], palette: Some(&palette) };
+
+    assert_eq!(
+        convert(&source, PixelFormat::Rgba8, &mut Vec::new()),
+        Err(Error::PaletteIndexOutOfRange { index: 9, entries: 4 })
+    );
+}
+
+#[test]
+fn convert_ignores_a_suggested_palette() {
+    let header = header(1, 1, 8, ColorType::Rgb);
+    let palette = palette(&COLORS);
+    let source = Source { header: &header, stride: 3, data: &[7, 8, 9], palette: Some(&palette) };
+    let mut out = Vec::new();
+
+    convert(&source, PixelFormat::Rgba8, &mut out).unwrap();
+
+    assert_eq!(out, [7, 8, 9, 255]);
+}
+
+#[test]
 fn convert_indexed_fails() {
     let header = header(1, 1, 8, ColorType::Indexed);
-    let source = Source { header: &header, stride: 1, data: &[0] };
+    let source = Source { header: &header, stride: 1, data: &[0], palette: None };
 
     assert_eq!(convert(&source, PixelFormat::Rgba8, &mut Vec::new()), Err(Error::MissingPalette));
 }

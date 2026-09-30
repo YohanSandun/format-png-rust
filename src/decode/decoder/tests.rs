@@ -535,11 +535,99 @@ fn decode_bitmap_passes_on_decode_errors() {
     );
 }
 
+// ---------- palettes ----------
+
+/// A 3x1, 8-bit indexed PNG with pixels 0, 1, 0 and `palette` as its PLTE data.
+fn indexed_3x1(palette: &[u8]) -> Vec<u8> {
+    png_of(&[
+        ihdr(3, 1, 8, ColorType::Indexed, Interlace::None),
+        chunk(b"PLTE", palette),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 0, 1, 0])),
+        chunk(b"IEND", b""),
+    ])
+}
+
+const TWO_COLORS: [u8; 6] = [10, 20, 30, 40, 50, 60];
+
 #[test]
-fn decode_bitmap_of_indexed_image_needs_a_palette() {
+fn decode_indexed_image_keeps_indices_and_palette() {
+    let image = Decoder::new().decode(&indexed_3x1(&TWO_COLORS)).unwrap();
+
+    assert_eq!(image.data(), &[0, 1, 0]);
+    assert_eq!(image.palette().unwrap().colors(), &[[10, 20, 30], [40, 50, 60]]);
+}
+
+#[test]
+fn decode_bitmap_of_indexed_image_uses_the_palette() {
+    let bitmap = Decoder::new().decode_bitmap(&indexed_3x1(&TWO_COLORS), PixelFormat::Rgba8).unwrap();
+
+    assert_eq!(bitmap.data(), &[10, 20, 30, 255, 40, 50, 60, 255, 10, 20, 30, 255]);
+}
+
+#[test]
+fn decoder_palette_is_the_last_images() {
+    let mut decoder = Decoder::new();
+    let mut pixels = Vec::new();
+    assert_eq!(decoder.palette(), None);
+
+    decoder.decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels).unwrap();
+    assert_eq!(decoder.palette().map(|p| p.len()), Some(2));
+
+    decoder.decode_into(&rgba_1x1(), &mut pixels).unwrap();
+    assert_eq!(decoder.palette(), None);
+}
+
+#[test]
+fn decoder_palette_is_cleared_by_a_failed_decode() {
+    let mut decoder = Decoder::new();
+    let mut pixels = Vec::new();
+    decoder.decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels).unwrap();
+
+    // One failure after the header, and one in it.
+    for broken in [&rgba_1x1()[..40], &b"not a png"[..]] {
+        decoder.decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels).unwrap();
+
+        assert!(decoder.decode_into(broken, &mut pixels).is_err());
+        assert_eq!(decoder.palette(), None);
+    }
+}
+
+#[test]
+fn decode_rgb_image_keeps_its_suggested_palette() {
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgb, Interlace::None),
+        chunk(b"PLTE", &[1, 2, 3]),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 7, 8, 9])),
+        chunk(b"IEND", b""),
+    ]);
+
+    let image = Decoder::new().decode(&data).unwrap();
+    assert_eq!(image.palette().map(|p| p.len()), Some(1));
+    // ...but it isn't used for converting
+    assert_eq!(image.to_bitmap(PixelFormat::Rgb8).unwrap().data(), &[7, 8, 9]);
+}
+
+#[test]
+fn decode_indexed_image_without_plte_fails() {
     let data = png(ihdr(2, 1, 8, ColorType::Indexed, Interlace::None), &[0, 0, 1]);
 
+    assert_eq!(Decoder::new().decode(&data), Err(Error::MissingPalette));
     assert_eq!(Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8), Err(Error::MissingPalette));
-    // the unconverted pixels still decode
-    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[0, 1]);
+}
+
+#[test]
+fn decode_rejects_invalid_plte() {
+    assert_eq!(Decoder::new().decode(&indexed_3x1(&[1, 2, 3, 4])), Err(Error::InvalidPaletteLength(4)));
+}
+
+#[test]
+fn decode_bitmap_rejects_index_past_the_palette() {
+    // Pixel 1 has index 1, but the palette has one color.
+    let data = indexed_3x1(&[1, 2, 3]);
+
+    assert!(Decoder::new().decode(&data).is_ok());
+    assert_eq!(
+        Decoder::new().decode_bitmap(&data, PixelFormat::Rgb8),
+        Err(Error::PaletteIndexOutOfRange { index: 1, entries: 1 })
+    );
 }

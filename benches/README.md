@@ -68,9 +68,7 @@ Windows starts paging: compare the minimum and the median.
 | `format_png::decode_rgba8 (new each time)` | The simple RGBA API |
 | `Image::to_bitmap Rgba8 (conversion only)` | Only the conversion of already-decoded pixels |
 
-`MB/s` is decoded output per second, measured at the median. The three
-`decode_rgba8` rows are skipped for indexed images, which can't be converted
-until `PLTE` is supported.
+`MB/s` is decoded output per second, measured at the median.
 
 Differences between rows show where the time goes:
 

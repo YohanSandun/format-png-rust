@@ -211,6 +211,9 @@ def valid():
     after_idat = png(13, 7, RGBA, 8)
     files["ancillary_after_idat.png"] = after_idat[:-len(IEND)] + chunk(b"tEXt", b"Author\x00format-png") + IEND
 
+    # A suggested palette, which RGB and RGBA images may have but don't use.
+    files["rgb_8_plte.png"] = png(13, 7, RGB, 8, extra=plte(8))
+
     return files
 
 
@@ -222,6 +225,11 @@ def invalid():
     def with_ihdr(data):
         """A PNG whose IHDR chunk (correct CRC) carries `data`."""
         return SIGNATURE + chunk(b"IHDR", data) + idat + IEND
+
+    def idat_of(color_type):
+        return chunk(b"IDAT", zlib.compress(image_data(13, 7, color_type, 8)))
+
+    indexed_idat = idat_of(INDEXED)
 
     def flip_last_byte(data):
         return data[:-1] + bytes([data[-1] ^ 0xFF])
@@ -261,8 +269,20 @@ def invalid():
         "idat_missing.png": SIGNATURE + ihdr(13, 7, 8, RGBA) + IEND,
         "idat_truncated.png": good[:-len(IEND) - 10],
         "iend_missing.png": good[:-len(IEND)],
-        "indexed_plte_missing.png": SIGNATURE + ihdr(13, 7, 8, INDEXED)
-            + chunk(b"IDAT", zlib.compress(image_data(13, 7, INDEXED, 8))) + IEND,
+        "indexed_plte_missing.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + indexed_idat + IEND,
+        # RGB, since an indexed image would fail first for having no palette at IDAT
+        "plte_after_idat.png": SIGNATURE + ihdr(13, 7, 8, RGB) + idat_of(RGB) + plte(8) + IEND,
+        "plte_duplicate.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + plte(8) + plte(8) + indexed_idat + IEND,
+        "plte_empty.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + chunk(b"PLTE") + indexed_idat + IEND,
+        "plte_length_4.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + chunk(b"PLTE", bytes(4)) + indexed_idat + IEND,
+        "plte_257_entries.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + chunk(b"PLTE", bytes(771)) + indexed_idat + IEND,
+        # 3 colors for 1-bit indices, which can only reach 2
+        "plte_too_many_entries.png": SIGNATURE + ihdr(13, 7, 1, INDEXED) + chunk(b"PLTE", bytes(9))
+            + chunk(b"IDAT", zlib.compress(image_data(13, 7, INDEXED, 1))) + IEND,
+        "plte_in_grayscale.png": SIGNATURE + ihdr(13, 7, 8, GRAY) + plte(8) + idat_of(GRAY) + IEND,
+        # Indices reach 30, past the end of a 16-color palette. Decodes, but can't
+        # be converted to colors.
+        "indexed_index_out_of_range.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + plte(4) + indexed_idat + IEND,
         "zlib_corrupt.png": SIGNATURE + ihdr(13, 7, 8, RGBA)
             + chunk(b"IDAT", b"\x78\x9c\xff\xff\xff\xff\xff\xff") + IEND,
         "filter_type_5.png": SIGNATURE + ihdr(13, 7, 8, RGBA)

@@ -120,13 +120,47 @@ fn invalid_image_data_fixtures_fail_with_the_right_error() {
 }
 
 #[test]
+fn invalid_palette_fixtures_fail_with_the_right_error() {
+    let cases = [
+        ("indexed_plte_missing.png", Error::MissingPalette),
+        ("plte_after_idat.png", Error::PaletteAfterImageData),
+        ("plte_duplicate.png", Error::DuplicatePalette),
+        ("plte_empty.png", Error::InvalidPaletteLength(0)),
+        ("plte_length_4.png", Error::InvalidPaletteLength(4)),
+        ("plte_257_entries.png", Error::InvalidPaletteLength(771)),
+        ("plte_too_many_entries.png", Error::TooManyPaletteEntries { entries: 3, bit_depth: 1 }),
+        ("plte_in_grayscale.png", Error::UnexpectedPalette(ColorType::Grayscale)),
+    ];
+
+    for (name, expected) in cases {
+        assert_eq!(decode("invalid", name), Err(expected), "{name}");
+    }
+}
+
+#[test]
+fn indexed_fixtures_have_the_generated_palette() {
+    for path in fixtures("valid") {
+        let image = format_png::decode(&fs::read(&path).unwrap()).unwrap();
+        if image.header().color_type != ColorType::Indexed {
+            continue;
+        }
+
+        // palette() from generate.py: one color per possible index.
+        let expected: Vec<[u8; 3]> = (0..1u32 << image.header().bit_depth)
+            .map(|i| [(i * 67 % 256) as u8, (i * 131 % 256) as u8, (i * 199 % 256) as u8])
+            .collect();
+        assert_eq!(image.palette().unwrap().colors(), expected, "{}", path.display());
+    }
+}
+
+#[test]
 fn every_invalid_fixture_fails() {
-    // PLTE isn't read yet, so a missing palette isn't detected.
-    let not_yet_detected = ["indexed_plte_missing.png"];
+    // Its indices decode; converting them to colors is what fails (tests/bitmap.rs).
+    let fails_only_when_converted = ["indexed_index_out_of_range.png"];
 
     for path in fixtures("invalid") {
         let name = path.file_name().unwrap().to_string_lossy();
-        if not_yet_detected.contains(&name.as_ref()) {
+        if fails_only_when_converted.contains(&name.as_ref()) {
             continue;
         }
 

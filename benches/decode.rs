@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use format_png::png::ChunkType;
-use format_png::{ChunkReader, ColorType, DecodeOptions, Decoder, PixelFormat};
+use format_png::{ChunkReader, DecodeOptions, Decoder, PixelFormat};
 use rust_deflate::Decompressor;
 
 const DEFAULT_RUNS: usize = 7;
@@ -131,11 +131,6 @@ fn bench_file(path: &Path, runs: usize) {
     bench("format_png::decode (new each time)", image_size, &mut || {
         black_box(format_png::decode(black_box(&data)).unwrap());
     });
-
-    if header.color_type == ColorType::Indexed {
-        println!("  (RGBA rows skipped: indexed images can't be converted until PLTE is supported)");
-        return;
-    }
 
     {
         let mut decoder = Decoder::new();

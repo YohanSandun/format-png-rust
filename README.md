@@ -6,8 +6,8 @@ buffers for decoding many images, the image in its own pixel format, and every
 chunk of the file.
 
 > **Status:** early development. Decoding works for every standard color type,
-> bit depth and interlacing method. `PLTE` and `tRNS` aren't read yet, and
-> encoding isn't implemented. See [Not supported yet](#not-supported-yet).
+> bit depth and interlacing method. `tRNS` isn't read yet, and encoding isn't
+> implemented. See [Not supported yet](#not-supported-yet).
 
 ## Features
 
@@ -84,7 +84,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `decode` returns an `Image` whose pixels haven't been converted. That means
 16-bit samples (big-endian), packed pixels under 8 bits, and palette indices for
-indexed images. `Decoder::decode_into` does the same into a buffer you reuse.
+indexed images, with the colors in `Image::palette`. `Decoder::decode_into` does
+the same into a buffer you reuse, and `Decoder::palette` then gives the palette.
 
 ```rust,no_run
 use format_png::ColorType;
@@ -153,7 +154,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Grayscale | Copied to red, green and blue |
 | No alpha, converted to RGBA8 | Alpha 255 |
 | Alpha, converted to RGB8 | Alpha dropped |
-| Indexed | `Error::MissingPalette` until `PLTE` is supported |
+| Indexed | The palette color; an index past the end of the palette is `Error::PaletteIndexOutOfRange` |
+| Suggested palette in an RGB or RGBA image | Ignored |
 
 Alpha isn't premultiplied, and no gamma or color correction is applied.
 
@@ -166,8 +168,6 @@ data, and so on. Malformed input returns an error; it doesn't panic. `Error` is
 
 ## Not supported yet
 
-- **`PLTE`:** indexed images decode to palette indices with `decode`, but can't
-  be converted to colors.
 - **`tRNS`:** its transparency isn't applied when converting.
 - **Other ancillary chunks** (`gAMA`, `iCCP`, text, and so on) are skipped by
   the decoder. They're still available through `ChunkReader`.
