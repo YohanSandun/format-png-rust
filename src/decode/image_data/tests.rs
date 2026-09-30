@@ -3,7 +3,7 @@
 use super::{ImageChunks, collect_image_data};
 use crate::decode::chunk_reader::ChunkReader;
 use crate::error::Error;
-use crate::png::{ColorType, ImageHeader, Interlace, Palette, SIGNATURE};
+use crate::png::{ColorType, ImageHeader, Interlace, Palette, SIGNATURE, Transparency};
 
 fn header(color_type: ColorType) -> ImageHeader {
     ImageHeader { width: 1, height: 1, bit_depth: 8, color_type, interlace: Interlace::None }
@@ -272,4 +272,141 @@ fn invalid_plte_contents_fail() {
     let data = png(&[chunk(b"PLTE", &[1, 2, 3, 4]), chunk(b"IDAT", b"abc"), chunk(b"IEND", b"")]);
 
     assert_eq!(palette_of(&header(ColorType::Indexed), &data), Err(Error::InvalidPaletteLength(4)));
+}
+
+// ---------- tRNS ----------
+
+/// The transparency `collect_image_data` returns for `data`.
+fn transparency_of(header: &ImageHeader, data: &[u8]) -> Result<Option<Transparency>, Error> {
+    collect_with(header, data).map(|(_, found)| found.transparency)
+}
+
+#[test]
+fn rgb_image_returns_its_transparent_color() {
+    let data = png(&[chunk(b"tRNS", &[0, 1, 0, 2, 0, 3]), chunk(b"IDAT", b"abc"), chunk(b"IEND", b"")]);
+
+    assert_eq!(transparency_of(&rgb(), &data), Ok(Some(Transparency::Rgb([1, 2, 3]))));
+}
+
+#[test]
+fn gray_image_returns_its_transparent_value() {
+    let data = png(&[chunk(b"tRNS", &[0, 37]), chunk(b"IDAT", b"abc"), chunk(b"IEND", b"")]);
+
+    assert_eq!(transparency_of(&header(ColorType::Grayscale), &data), Ok(Some(Transparency::Gray(37))));
+}
+
+#[test]
+fn indexed_image_returns_palette_alpha() {
+    let data = png(&[
+        chunk(b"PLTE", &[1, 2, 3, 4, 5, 6]),
+        chunk(b"tRNS", &[0, 128]),
+        chunk(b"IDAT", b"abc"),
+        chunk(b"IEND", b""),
+    ]);
+
+    let (_, found) = collect_with(&header(ColorType::Indexed), &data).unwrap();
+
+    assert_eq!(found.palette.map(|p| p.len()), Some(2));
+    let Some(Transparency::Palette(alpha)) = found.transparency else { panic!("expected palette alpha") };
+    assert_eq!(alpha.values(), &[0, 128]);
+}
+
+#[test]
+fn transparency_is_found_among_other_chunks() {
+    let data = png(&[
+        chunk(b"gAMA", &[0, 0, 177, 143]),
+        chunk(b"tRNS", &[0, 37]),
+        chunk(b"tEXt", b"Title\0x"),
+        chunk(b"IDAT", b"abc"),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(transparency_of(&header(ColorType::Grayscale), &data), Ok(Some(Transparency::Gray(37))));
+}
+
+#[test]
+fn images_without_trns_return_no_transparency() {
+    let data = png(&[chunk(b"IDAT", b"abc"), chunk(b"IEND", b"")]);
+
+    for color_type in [ColorType::Grayscale, ColorType::Rgb, ColorType::GrayscaleAlpha, ColorType::Rgba] {
+        assert_eq!(transparency_of(&header(color_type), &data), Ok(None), "{color_type:?}");
+    }
+}
+
+#[test]
+fn trns_after_idat_fails() {
+    for data in [
+        png(&[chunk(b"IDAT", b"abc"), chunk(b"tRNS", &[0, 1, 0, 2, 0, 3]), chunk(b"IEND", b"")]),
+        png(&[chunk(b"IDAT", b"a"), chunk(b"tRNS", &[0, 1, 0, 2, 0, 3]), chunk(b"IDAT", b"b"), chunk(b"IEND", b"")]),
+    ] {
+        assert_eq!(transparency_of(&rgb(), &data), Err(Error::TransparencyAfterImageData));
+    }
+}
+
+#[test]
+fn second_trns_fails() {
+    let data = png(&[
+        chunk(b"tRNS", &[0, 1, 0, 2, 0, 3]),
+        chunk(b"tRNS", &[0, 4, 0, 5, 0, 6]),
+        chunk(b"IDAT", b"abc"),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(transparency_of(&rgb(), &data), Err(Error::DuplicateTransparency));
+}
+
+#[test]
+fn indexed_trns_before_plte_fails() {
+    let data = png(&[
+        chunk(b"tRNS", &[0, 128]),
+        chunk(b"PLTE", &[1, 2, 3, 4, 5, 6]),
+        chunk(b"IDAT", b"abc"),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(transparency_of(&header(ColorType::Indexed), &data), Err(Error::TransparencyBeforePalette));
+}
+
+#[test]
+fn rgb_plte_after_trns_fails() {
+    // A suggested palette must come before tRNS too.
+    let data = png(&[
+        chunk(b"tRNS", &[0, 1, 0, 2, 0, 3]),
+        chunk(b"PLTE", &[1, 2, 3]),
+        chunk(b"IDAT", b"abc"),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(transparency_of(&rgb(), &data), Err(Error::TransparencyBeforePalette));
+}
+
+#[test]
+fn plte_after_trns_and_idat_is_reported_as_after_image_data() {
+    let data = png(&[
+        chunk(b"tRNS", &[0, 1, 0, 2, 0, 3]),
+        chunk(b"IDAT", b"abc"),
+        chunk(b"PLTE", &[1, 2, 3]),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(transparency_of(&rgb(), &data), Err(Error::PaletteAfterImageData));
+}
+
+#[test]
+fn trns_for_color_types_with_alpha_fails() {
+    let data = png(&[chunk(b"tRNS", &[0, 1]), chunk(b"IDAT", b"abc"), chunk(b"IEND", b"")]);
+
+    for color_type in [ColorType::GrayscaleAlpha, ColorType::Rgba] {
+        assert_eq!(transparency_of(&header(color_type), &data), Err(Error::UnexpectedTransparency(color_type)));
+    }
+}
+
+#[test]
+fn invalid_trns_contents_fail() {
+    let data = png(&[chunk(b"tRNS", &[0, 1, 2]), chunk(b"IDAT", b"abc"), chunk(b"IEND", b"")]);
+
+    assert_eq!(
+        transparency_of(&rgb(), &data),
+        Err(Error::InvalidTransparencyLength { color_type: ColorType::Rgb, length: 3 })
+    );
 }

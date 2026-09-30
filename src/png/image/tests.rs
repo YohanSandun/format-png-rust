@@ -2,7 +2,7 @@
 
 use super::Image;
 use crate::error::Error;
-use crate::png::{ColorType, ImageHeader, Interlace, Palette, PixelFormat};
+use crate::png::{ColorType, ImageHeader, Interlace, Palette, PaletteAlpha, PixelFormat, Transparency};
 
 /// 2x3 RGB, 8-bit: 6 bytes per row.
 fn image() -> Image {
@@ -13,7 +13,7 @@ fn image() -> Image {
         color_type: ColorType::Rgb,
         interlace: Interlace::None,
     };
-    Image::new(header, 6, (0..18).collect(), None)
+    Image::new(header, 6, (0..18).collect(), None, None)
 }
 
 /// 3x1 indexed, 8-bit, with `pixels` as indices into a 2-color palette.
@@ -26,7 +26,7 @@ fn indexed_image(pixels: [u8; 3]) -> Image {
         interlace: Interlace::None,
     };
     let palette = Palette::parse(&[10, 20, 30, 40, 50, 60], &header).unwrap();
-    Image::new(header, 3, pixels.to_vec(), Some(palette))
+    Image::new(header, 3, pixels.to_vec(), Some(palette), None)
 }
 
 #[test]
@@ -104,4 +104,31 @@ fn to_bitmap_of_indexed_image_rejects_index_past_the_palette() {
         image.to_bitmap(PixelFormat::Rgba8),
         Err(Error::PaletteIndexOutOfRange { index: 2, entries: 2 })
     );
+}
+
+#[test]
+fn transparency_is_none_without_trns() {
+    assert_eq!(image().transparency(), None);
+}
+
+#[test]
+fn to_bitmap_applies_transparency() {
+    // Pixel (1, 0) of `image()` is 3, 4, 5.
+    let mut image = image();
+    image.transparency = Some(Transparency::Rgb([3, 4, 5]));
+
+    let bitmap = image.to_bitmap(PixelFormat::Rgba8).unwrap();
+
+    assert_eq!(&bitmap.data()[..8], &[0, 1, 2, 255, 3, 4, 5, 0]);
+    assert_eq!(image.transparency(), Some(&Transparency::Rgb([3, 4, 5])));
+}
+
+#[test]
+fn to_bitmap_of_indexed_image_applies_palette_alpha() {
+    let mut image = indexed_image([1, 0, 1]);
+    image.transparency = Some(Transparency::Palette(PaletteAlpha::new(&[255, 0])));
+
+    let bitmap = image.to_bitmap(PixelFormat::Rgba8).unwrap();
+
+    assert_eq!(bitmap.data(), &[40, 50, 60, 0, 10, 20, 30, 255, 40, 50, 60, 0]);
 }

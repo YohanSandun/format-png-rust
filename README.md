@@ -6,8 +6,8 @@ buffers for decoding many images, the image in its own pixel format, and every
 chunk of the file.
 
 > **Status:** early development. Decoding works for every standard color type,
-> bit depth and interlacing method. `tRNS` isn't read yet, and encoding isn't
-> implemented. See [Not supported yet](#not-supported-yet).
+> bit depth and interlacing method, including palettes and `tRNS` transparency.
+> Encoding isn't implemented yet. See [Not supported yet](#not-supported-yet).
 
 ## Features
 
@@ -152,8 +152,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | 1, 2 or 4-bit samples | Scaled to the full range (×255, ×85, ×17) |
 | 16-bit samples | High byte kept |
 | Grayscale | Copied to red, green and blue |
-| No alpha, converted to RGBA8 | Alpha 255 |
-| Alpha, converted to RGB8 | Alpha dropped |
+| No alpha, converted to RGBA8 | Alpha 255, or from `tRNS` if there is one |
+| `tRNS` color (grayscale, RGB) | Pixels with exactly that color get alpha 0, compared at the image's own bit depth |
+| `tRNS` alpha (indexed) | Each palette entry's alpha; entries past its end are opaque |
+| Alpha or `tRNS`, converted to RGB8 | Alpha dropped, `tRNS` ignored |
 | Indexed | The palette color; an index past the end of the palette is `Error::PaletteIndexOutOfRange` |
 | Suggested palette in an RGB or RGBA image | Ignored |
 
@@ -168,8 +170,7 @@ data, and so on. Malformed input returns an error; it doesn't panic. `Error` is
 
 ## Not supported yet
 
-- **`tRNS`:** its transparency isn't applied when converting.
-- **Other ancillary chunks** (`gAMA`, `iCCP`, text, and so on) are skipped by
+- **Ancillary chunks besides `tRNS`** (`gAMA`, `iCCP`, text, and so on) are skipped by
   the decoder. They're still available through `ChunkReader`.
 - **`DecodeOptions::preserve_chunks` and `preserve_metadata`** exist but have no
   effect yet.

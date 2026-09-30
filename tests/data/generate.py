@@ -198,6 +198,14 @@ def valid():
     files["indexed_8_trns.png"] = png(13, 7, INDEXED, 8, extra=chunk(b"tRNS", bytes(range(0, 256, 2))))
     files["gray_8_trns.png"] = png(13, 7, GRAY, 8, extra=chunk(b"tRNS", struct.pack(">H", 37)))
     files["rgb_16_trns.png"] = png(13, 7, RGB, 16, extra=chunk(b"tRNS", struct.pack(">HHH", 0, 53, 106)))
+    # (0, 53, 106) is the color of pixel (0, 0) at both bit depths.
+    files["rgb_8_trns.png"] = png(13, 7, RGB, 8, extra=chunk(b"tRNS", struct.pack(">HHH", 0, 53, 106)))
+    # A sub-byte key, compared before scaling: 2-bit 1 is 85 once converted.
+    # Pillow gets this one wrong: it scales the pixels but not the key, so it
+    # finds no transparent pixels.
+    files["gray_2_trns.png"] = png(13, 7, GRAY, 2, extra=chunk(b"tRNS", struct.pack(">H", 1)))
+    # Fewer alpha values than palette entries: index 3 stays opaque.
+    files["indexed_2_trns.png"] = png(13, 7, INDEXED, 2, extra=chunk(b"tRNS", bytes([0, 85, 170])))
 
     # Ancillary chunks, public and private, before and after IDAT.
     ancillary = (
@@ -230,6 +238,7 @@ def invalid():
         return chunk(b"IDAT", zlib.compress(image_data(13, 7, color_type, 8)))
 
     indexed_idat = idat_of(INDEXED)
+    trns_rgb = chunk(b"tRNS", struct.pack(">HHH", 0, 53, 106))
 
     def flip_last_byte(data):
         return data[:-1] + bytes([data[-1] ^ 0xFF])
@@ -283,6 +292,22 @@ def invalid():
         # Indices reach 30, past the end of a 16-color palette. Decodes, but can't
         # be converted to colors.
         "indexed_index_out_of_range.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + plte(4) + indexed_idat + IEND,
+        "plte_after_trns.png": SIGNATURE + ihdr(13, 7, 8, RGB) + trns_rgb + plte(8) + idat_of(RGB) + IEND,
+
+        # tRNS
+        "trns_after_idat.png": SIGNATURE + ihdr(13, 7, 8, RGB) + idat_of(RGB) + trns_rgb + IEND,
+        "trns_duplicate.png": SIGNATURE + ihdr(13, 7, 8, RGB) + trns_rgb + trns_rgb + idat_of(RGB) + IEND,
+        "trns_before_plte.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + chunk(b"tRNS", bytes(4)) + plte(8)
+            + indexed_idat + IEND,
+        "trns_in_rgba.png": SIGNATURE + ihdr(13, 7, 8, RGBA) + chunk(b"tRNS", bytes(8)) + idat_of(RGBA) + IEND,
+        "trns_in_gray_alpha.png": SIGNATURE + ihdr(13, 7, 8, GRAY_ALPHA) + chunk(b"tRNS", bytes(2))
+            + idat_of(GRAY_ALPHA) + IEND,
+        "trns_gray_length_3.png": SIGNATURE + ihdr(13, 7, 8, GRAY) + chunk(b"tRNS", bytes(3)) + idat_of(GRAY) + IEND,
+        "trns_rgb_length_2.png": SIGNATURE + ihdr(13, 7, 8, RGB) + chunk(b"tRNS", bytes(2)) + idat_of(RGB) + IEND,
+        "trns_indexed_empty.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + plte(8) + chunk(b"tRNS") + indexed_idat + IEND,
+        # 5 alpha values for a 2-bit image's 4 palette entries
+        "trns_too_many_entries.png": SIGNATURE + ihdr(13, 7, 2, INDEXED) + plte(2) + chunk(b"tRNS", bytes(5))
+            + chunk(b"IDAT", zlib.compress(image_data(13, 7, INDEXED, 2))) + IEND,
         "zlib_corrupt.png": SIGNATURE + ihdr(13, 7, 8, RGBA)
             + chunk(b"IDAT", b"\x78\x9c\xff\xff\xff\xff\xff\xff") + IEND,
         "filter_type_5.png": SIGNATURE + ihdr(13, 7, 8, RGBA)

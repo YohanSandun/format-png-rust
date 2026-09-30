@@ -6,7 +6,7 @@ use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
 use crate::convert::{Source, convert, is_unchanged};
-use crate::png::{Bitmap, ChunkType, Image, ImageHeader, Interlace, Palette, PixelFormat};
+use crate::png::{Bitmap, ChunkType, Image, ImageHeader, Interlace, Palette, PixelFormat, Transparency};
 use rust_deflate::{Decompressor, OutputOptions};
 
 /// A reusable PNG decoder.
@@ -45,6 +45,8 @@ pub struct Decoder {
     pixels: Vec<u8>,
     /// The `PLTE` palette of the last image decoded, if it had one.
     palette: Option<Palette>,
+    /// The `tRNS` transparency of the last image decoded, if it had one.
+    transparency: Option<Transparency>,
 }
 
 impl Decoder {
@@ -69,6 +71,7 @@ impl Decoder {
             pass: Vec::new(),
             pixels: Vec::new(),
             palette: None,
+            transparency: None,
         }
     }
 
@@ -82,6 +85,12 @@ impl Decoder {
     /// Indexed images always have one; see [`Image::palette`].
     pub fn palette(&self) -> Option<&Palette> {
         self.palette.as_ref()
+    }
+
+    /// The `tRNS` transparency of the last image decoded, like [`palette`](Self::palette);
+    /// see [`Image::transparency`].
+    pub fn transparency(&self) -> Option<&Transparency> {
+        self.transparency.as_ref()
     }
 
     /// Consumes the decoder and returns its decompressor, to reuse elsewhere.
@@ -130,7 +139,7 @@ impl Decoder {
     pub fn decode(&mut self, data: &[u8]) -> Result<Image, Error> {
         let mut pixels = Vec::new();
         let header = self.decode_into(data, &mut pixels)?;
-        Ok(Image::new(header, header.stride()?, pixels, self.palette.clone()))
+        Ok(Image::new(header, header.stride()?, pixels, self.palette.clone(), self.transparency.clone()))
     }
 
     /// Like [`decode`](Self::decode), but writes the pixels to `out` and returns
@@ -153,14 +162,19 @@ impl Decoder {
     ///   [`Error::DuplicatePalette`] if `PLTE` is misplaced or repeated.
     /// - [`Error::InvalidPaletteLength`], [`Error::TooManyPaletteEntries`] or
     ///   [`Error::UnexpectedPalette`] if the `PLTE` chunk is invalid.
+    /// - [`Error::TransparencyAfterImageData`], [`Error::TransparencyBeforePalette`]
+    ///   or [`Error::DuplicateTransparency`] if `tRNS` is misplaced or repeated.
+    /// - [`Error::InvalidTransparencyLength`], [`Error::TooManyTransparencyEntries`]
+    ///   or [`Error::UnexpectedTransparency`] if the `tRNS` chunk is invalid.
     /// - [`Error::Decompression`] if the zlib stream is corrupt.
     /// - [`Error::ImageDataTooShort`] or [`Error::ImageDataTooLong`] if it doesn't
     ///   decompress to the size the header requires.
     /// - [`Error::InvalidFilterType`] if a scanline has an unknown filter type.
     /// - [`Error::ImageTooLarge`] if the image doesn't fit in memory on this platform.
     pub fn decode_into(&mut self, data: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
-        // Cleared first, so a failed decode doesn't leave the last image's palette.
+        // Cleared first, so a failed decode doesn't leave the last image's chunks.
         self.palette = None;
+        self.transparency = None;
 
         let mut chunks = self.chunks(data)?;
         let header = Self::read_image_header(&mut chunks)?;
@@ -196,6 +210,7 @@ impl Decoder {
         }
 
         self.palette = found.palette;
+        self.transparency = found.transparency;
         Ok(header)
     }
 
@@ -246,6 +261,7 @@ impl Decoder {
                 stride: header.stride()?,
                 data: &pixels,
                 palette: self.palette.as_ref(),
+                transparency: self.transparency.as_ref(),
             };
             convert(&source, format, out)?;
             Ok(header)

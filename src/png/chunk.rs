@@ -26,6 +26,8 @@ impl ChunkType {
     pub const IDAT: ChunkType = ChunkType(*b"IDAT");
     /// Image trailer, always the last chunk.
     pub const IEND: ChunkType = ChunkType(*b"IEND");
+    /// Transparency for images without an alpha channel.
+    pub const TRNS: ChunkType = ChunkType(*b"tRNS");
 
     /// Creates a chunk type, checking every byte is an ASCII letter.
     ///

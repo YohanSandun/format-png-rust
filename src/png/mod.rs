@@ -7,7 +7,8 @@ pub(crate) mod crc;
 mod filter;
 mod header;
 mod image;
-mod palette;
+pub(crate) mod palette;
+mod transparency;
 
 pub use bitmap::{Bitmap, PixelFormat};
 pub use chunk::{Chunk, ChunkType};
@@ -15,6 +16,7 @@ pub use filter::FilterType;
 pub use header::{ColorType, ImageHeader, Interlace};
 pub use image::Image;
 pub use palette::Palette;
+pub use transparency::{PaletteAlpha, Transparency};
 
 /// The 8-byte signature every PNG file starts with.
 pub const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];

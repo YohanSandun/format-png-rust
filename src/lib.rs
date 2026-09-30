@@ -44,8 +44,8 @@
 //!
 //! # Not supported yet
 //!
-//! `tRNS` isn't read, so its transparency isn't applied. Other ancillary chunks
-//! are skipped by the decoder, but a [`ChunkReader`] still returns them.
+//! Ancillary chunks other than `tRNS` (such as `gAMA`, `iCCP` and text) are
+//! skipped by the decoder, but a [`ChunkReader`] still returns them.
 
 pub mod png;
 mod convert;
@@ -55,7 +55,7 @@ mod error;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use error::Error;
-pub use png::{Bitmap, ColorType, Image, ImageHeader, Interlace, Palette, PixelFormat};
+pub use png::{Bitmap, ColorType, Image, ImageHeader, Interlace, Palette, PaletteAlpha, PixelFormat, Transparency};
 
 /// Decodes a PNG to 8-bit RGBA, ready for a browser canvas's `ImageData`.
 ///

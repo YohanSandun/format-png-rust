@@ -94,6 +94,26 @@ pub enum Error {
 
     /// A pixel of an indexed image refers to a palette entry that doesn't exist.
     PaletteIndexOutOfRange { index: u8, entries: usize },
+
+    /// The `tRNS` chunk's length is wrong for the color type: it must be 2 bytes
+    /// for grayscale, 6 for RGB, and 1 or more for indexed.
+    InvalidTransparencyLength { color_type: ColorType, length: usize },
+
+    /// An indexed image's `tRNS` chunk has more alpha values than its palette has entries.
+    TooManyTransparencyEntries { entries: usize, palette_entries: usize },
+
+    /// An image with an alpha channel has a `tRNS` chunk, which isn't allowed.
+    UnexpectedTransparency(ColorType),
+
+    /// There is more than one `tRNS` chunk.
+    DuplicateTransparency,
+
+    /// The `tRNS` chunk comes after the image data.
+    TransparencyAfterImageData,
+
+    /// The `tRNS` chunk comes before `PLTE`: either an indexed image's `tRNS` has
+    /// no palette before it, or a `PLTE` follows the `tRNS`.
+    TransparencyBeforePalette,
 }
 
 impl fmt::Display for Error {
@@ -147,6 +167,18 @@ impl fmt::Display for Error {
             Error::PaletteIndexOutOfRange { index, entries } => {
                 write!(f, "palette index {index} is out of range for a palette of {entries} entries")
             }
+            Error::InvalidTransparencyLength { color_type, length } => {
+                write!(f, "tRNS length {length} is invalid for color type {color_type:?}")
+            }
+            Error::TooManyTransparencyEntries { entries, palette_entries } => {
+                write!(f, "tRNS has {entries} entries, more than the palette's {palette_entries}")
+            }
+            Error::UnexpectedTransparency(color_type) => {
+                write!(f, "tRNS chunk is not allowed for color type {color_type:?}")
+            }
+            Error::DuplicateTransparency => f.write_str("more than one tRNS chunk"),
+            Error::TransparencyAfterImageData => f.write_str("tRNS chunk comes after IDAT"),
+            Error::TransparencyBeforePalette => f.write_str("tRNS chunk comes before PLTE"),
         }
     }
 }

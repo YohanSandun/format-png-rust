@@ -1,7 +1,7 @@
 use crate::ColorType;
 use super::chunk_reader::ChunkReader;
 use crate::error::Error;
-use crate::png::{ChunkType, ImageHeader, Palette};
+use crate::png::{ChunkType, ImageHeader, Palette, Transparency};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum IdatState {
@@ -11,10 +11,11 @@ enum IdatState {
 }
 
 /// The chunks besides `IDAT` that decoding or converting the image needs, read
-/// on the way to `IEND`. `tRNS` will go here too.
+/// on the way to `IEND`.
 #[derive(Debug, Default)]
 pub(crate) struct ImageChunks {
     pub(crate) palette: Option<Palette>,
+    pub(crate) transparency: Option<Transparency>,
 }
 
 /// Reads the chunks after `IHDR` up to and including `IEND`, appending the data
@@ -26,7 +27,8 @@ pub(crate) struct ImageChunks {
 /// - `Error::MissingImageData` if `IEND` comes before any `IDAT`.
 /// - `Error::NonConsecutiveImageData` if another chunk comes between two `IDAT`s.
 /// - `Error::MissingImageEnd` if the input ends before `IEND`.
-/// - Any error from `read_palette` or `require_palette`.
+/// - `Error::TransparencyBeforePalette` if a `PLTE` follows a `tRNS`.
+/// - Any error from `read_palette`, `require_palette` or `read_transparency`.
 /// - Any error from `ChunkReader::next_chunk`.
 pub(crate) fn collect_image_data(
     chunks: &mut ChunkReader<'_>,
@@ -38,7 +40,15 @@ pub(crate) fn collect_image_data(
 
     while let Some(chunk) = chunks.next_chunk()? {
         match (chunk.chunk_type(), state) {
-            (ChunkType::PLTE, _) => read_palette(chunk.data(), header, state, &mut found.palette)?,
+            (ChunkType::PLTE, _) => {
+                if found.transparency.is_some() && state == IdatState::NotSeen {
+                    return Err(Error::TransparencyBeforePalette);
+                }
+                read_palette(chunk.data(), header, state, &mut found.palette)?;
+            }
+            (ChunkType::TRNS, _) => {
+                read_transparency(chunk.data(), header, state, found.palette.as_ref(), &mut found.transparency)?;
+            }
             (ChunkType::IDAT, IdatState::Done) => return Err(Error::NonConsecutiveImageData),
             (ChunkType::IDAT, _) => {
                 if let IdatState::NotSeen = state {
@@ -74,6 +84,33 @@ fn read_palette(data: &[u8], header: &ImageHeader, state: IdatState, palette: &m
     }
 
     palette.replace(Palette::parse(data, header)?);
+    Ok(())
+}
+
+/// Handles a `tRNS` chunk: parses `data` into `transparency`, which holds the
+/// `tRNS` found so far, if any. `palette` is the `PLTE` read before it, if any,
+/// and `state` says whether image data has started.
+///
+/// Errors:
+/// - `Error::TransparencyAfterImageData` if an `IDAT` came before it.
+/// - `Error::DuplicateTransparency` if there was already a `tRNS`.
+/// - Any error from `Transparency::parse`.
+fn read_transparency(
+    data: &[u8],
+    header: &ImageHeader,
+    state: IdatState,
+    palette: Option<&Palette>,
+    transparency: &mut Option<Transparency>,
+) -> Result<(), Error> {
+    if state != IdatState::NotSeen {
+        return Err(Error::TransparencyAfterImageData);
+    }
+
+    if transparency.is_some() {
+        return Err(Error::DuplicateTransparency);
+    }
+
+    transparency.replace(Transparency::parse(data,header,palette)?);
     Ok(())
 }
 

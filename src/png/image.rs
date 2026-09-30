@@ -1,6 +1,6 @@
 use crate::convert::{Source, convert};
 use crate::error::Error;
-use crate::png::{Bitmap, ImageHeader, Palette, PixelFormat};
+use crate::png::{Bitmap, ImageHeader, Palette, PixelFormat, Transparency};
 
 /// A decoded image, in the PNG's own pixel format.
 ///
@@ -18,12 +18,19 @@ pub struct Image {
     stride: usize,
     data: Vec<u8>,
     palette: Option<Palette>,
+    transparency: Option<Transparency>,
 }
 
 impl Image {
-    pub(crate) fn new(header: ImageHeader, stride: usize, data: Vec<u8>, palette: Option<Palette>) -> Self {
+    pub(crate) fn new(
+        header: ImageHeader,
+        stride: usize,
+        data: Vec<u8>,
+        palette: Option<Palette>,
+        transparency: Option<Transparency>,
+    ) -> Self {
         debug_assert_eq!(data.len(), stride * header.height as usize);
-        Self { header, stride, data, palette }
+        Self { header, stride, data, palette, transparency }
     }
 
     /// The image's header.
@@ -70,6 +77,13 @@ impl Image {
         self.palette.as_ref()
     }
 
+    /// The `tRNS` transparency, if the image has one: a transparent color for
+    /// grayscale and RGB images, or alpha values for an indexed image's palette.
+    /// Images with an alpha channel never have one.
+    pub fn transparency(&self) -> Option<&Transparency> {
+        self.transparency.as_ref()
+    }
+
     /// Consumes the image and returns its pixel data.
     pub fn into_data(self) -> Vec<u8> {
         self.data
@@ -79,8 +93,10 @@ impl Image {
     ///
     /// Samples under 8 bits are scaled to the full range, 16-bit samples keep
     /// their high byte, grayscale is copied to red, green and blue, and indexed
-    /// pixels become their palette color. Converting to [`PixelFormat::Rgba8`] adds
-    /// alpha 255 to images without alpha, and [`PixelFormat::Rgb8`] drops alpha.
+    /// pixels become their palette color. Converting to [`PixelFormat::Rgba8`]
+    /// applies the [`transparency`](Self::transparency) if there is one, and
+    /// otherwise adds alpha 255 to images without alpha. [`PixelFormat::Rgb8`]
+    /// drops alpha and ignores transparency.
     ///
     /// # Errors
     ///
@@ -94,7 +110,13 @@ impl Image {
     }
 
     pub(crate) fn source(&self) -> Source<'_> {
-        Source { header: &self.header, stride: self.stride, data: &self.data, palette: self.palette.as_ref() }
+        Source {
+            header: &self.header,
+            stride: self.stride,
+            data: &self.data,
+            palette: self.palette.as_ref(),
+            transparency: self.transparency.as_ref(),
+        }
     }
 }
 

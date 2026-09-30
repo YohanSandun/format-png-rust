@@ -5,7 +5,7 @@ use rust_deflate::Decompressor;
 use super::Decoder;
 use crate::decode::options::DecodeOptions;
 use crate::error::Error;
-use crate::png::{ChunkType, ColorType, ImageHeader, Interlace, PixelFormat, SIGNATURE};
+use crate::png::{ChunkType, ColorType, ImageHeader, Interlace, PixelFormat, SIGNATURE, Transparency};
 
 /// Signature + IHDR for a 1x1, 8-bit RGBA image, with its correct CRC.
 const PNG_1X1_RGBA: [u8; 33] = [
@@ -630,4 +630,84 @@ fn decode_bitmap_rejects_index_past_the_palette() {
         Decoder::new().decode_bitmap(&data, PixelFormat::Rgb8),
         Err(Error::PaletteIndexOutOfRange { index: 1, entries: 1 })
     );
+}
+
+// ---------- transparency ----------
+
+/// A 2x1, 8-bit grayscale PNG with pixels 5 and 6, and 5 transparent.
+fn gray_2x1_with_key() -> Vec<u8> {
+    png_of(&[
+        ihdr(2, 1, 8, ColorType::Grayscale, Interlace::None),
+        chunk(b"tRNS", &[0, 5]),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 5, 6])),
+        chunk(b"IEND", b""),
+    ])
+}
+
+#[test]
+fn decode_keeps_transparency() {
+    let image = Decoder::new().decode(&gray_2x1_with_key()).unwrap();
+
+    assert_eq!(image.data(), &[5, 6]);
+    assert_eq!(image.transparency(), Some(&Transparency::Gray(5)));
+}
+
+#[test]
+fn decode_bitmap_applies_transparency() {
+    let bitmap = Decoder::new().decode_bitmap(&gray_2x1_with_key(), PixelFormat::Rgba8).unwrap();
+
+    assert_eq!(bitmap.data(), &[5, 5, 5, 0, 6, 6, 6, 255]);
+}
+
+#[test]
+fn decode_bitmap_of_indexed_image_applies_palette_alpha() {
+    let data = png_of(&[
+        ihdr(3, 1, 8, ColorType::Indexed, Interlace::None),
+        chunk(b"PLTE", &TWO_COLORS),
+        chunk(b"tRNS", &[64]),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 0, 1, 0])),
+        chunk(b"IEND", b""),
+    ]);
+
+    let bitmap = Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8).unwrap();
+
+    assert_eq!(bitmap.data(), &[10, 20, 30, 64, 40, 50, 60, 255, 10, 20, 30, 64]);
+}
+
+#[test]
+fn decoder_transparency_is_the_last_images() {
+    let mut decoder = Decoder::new();
+    let mut pixels = Vec::new();
+    assert_eq!(decoder.transparency(), None);
+
+    decoder.decode_into(&gray_2x1_with_key(), &mut pixels).unwrap();
+    assert_eq!(decoder.transparency(), Some(&Transparency::Gray(5)));
+
+    decoder.decode_into(&rgba_1x1(), &mut pixels).unwrap();
+    assert_eq!(decoder.transparency(), None);
+}
+
+#[test]
+fn decoder_transparency_is_cleared_by_a_failed_decode() {
+    let mut decoder = Decoder::new();
+    let mut pixels = Vec::new();
+
+    for broken in [&rgba_1x1()[..40], &b"not a png"[..]] {
+        decoder.decode_into(&gray_2x1_with_key(), &mut pixels).unwrap();
+
+        assert!(decoder.decode_into(broken, &mut pixels).is_err());
+        assert_eq!(decoder.transparency(), None);
+    }
+}
+
+#[test]
+fn decode_rejects_invalid_trns() {
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"tRNS", &[0, 0]),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 1, 2, 3, 4])),
+        chunk(b"IEND", b""),
+    ]);
+
+    assert_eq!(Decoder::new().decode(&data), Err(Error::UnexpectedTransparency(ColorType::Rgba)));
 }

@@ -7,19 +7,21 @@
 //! - Grayscale is copied to red, green and blue.
 //! - Images without alpha get alpha 255 in [`PixelFormat::Rgba8`];
 //!   [`PixelFormat::Rgb8`] drops alpha.
-//! - Indexed pixels become their palette color, with alpha 255 in
-//!   [`PixelFormat::Rgba8`]. An index past the end of the palette fails with
-//!   [`Error::PaletteIndexOutOfRange`], and a missing palette with
-//!   [`Error::MissingPalette`].
+//! - Indexed pixels become their palette color. An index past the end of the
+//!   palette fails with [`Error::PaletteIndexOutOfRange`], and a missing palette
+//!   with [`Error::MissingPalette`].
+//! - `tRNS` is applied in [`PixelFormat::Rgba8`] and ignored in
+//!   [`PixelFormat::Rgb8`]. Grayscale and RGB pixels that match its color, at the
+//!   image's own bit depth, get alpha 0. Indexed pixels get the alpha of their
+//!   palette entry, or 255 past the end of the `tRNS` values.
 
 use crate::ColorType;
 use crate::error::Error;
-use crate::png::{ImageHeader, Palette, PixelFormat};
+use crate::png::{ImageHeader, Palette, PaletteAlpha, PixelFormat, Transparency};
 
 /// What a conversion reads from. Borrowed so decoded pixels aren't copied.
 ///
-/// When `tRNS` is supported, its parsed contents go here as a `transparency`
-/// field, without changing any signature below.
+/// Chunks read in the future that affect conversion get a field here too.
 pub(crate) struct Source<'a> {
     pub(crate) header: &'a ImageHeader,
     /// Bytes per row of `data`, as `ImageHeader::stride` gives.
@@ -29,6 +31,8 @@ pub(crate) struct Source<'a> {
     /// The `PLTE` chunk. Needed for indexed images; ignored for the others,
     /// whose palette is only a suggestion.
     pub(crate) palette: Option<&'a Palette>,
+    /// The `tRNS` chunk, if the image has one.
+    pub(crate) transparency: Option<&'a Transparency>,
 }
 
 /// Scales a sample of `bit_depth` bits (1, 2, 4, 8 or 16) to 8 bits.
@@ -129,13 +133,84 @@ fn row_converter(header: &ImageHeader, format: PixelFormat) -> RowConverter {
 /// single lookup. Entries past the end of the palette are `[0, 0, 0, 255]`; they're
 /// never used, because indices are checked against the palette's length.
 ///
-/// Alpha is 255 for now. When `tRNS` is supported, its alpha values go here.
+/// Alpha is 255; [`apply_palette_alpha`] then sets it from `tRNS`.
 pub(crate) fn palette_table(palette: &Palette) -> [[u8; 4]; 256] {
     let mut table = [[0, 0, 0, 255]; 256];
     for (entry, &[r, g, b]) in table.iter_mut().zip(palette.colors()) {
         *entry = [r, g, b, 255];
     }
     table
+}
+
+/// Sets the alpha of each entry of `table` that `alpha` has a value for. Entries
+/// past the end of `alpha` stay 255.
+pub(crate) fn apply_palette_alpha(table: &mut [[u8; 4]; 256], alpha: &PaletteAlpha) {
+    for (entry, &value) in table.iter_mut().zip(alpha.values()) {
+        entry[3] = value;
+    }
+}
+
+/// The lookup table for an indexed image: its palette, with `tRNS` alpha applied
+/// if it has one, and the palette's length.
+///
+/// Returns `Error::MissingPalette` if the image has no palette.
+fn indexed_table(source: &Source<'_>) -> Result<([[u8; 4]; 256], usize), Error> {
+    let palette = source.palette.ok_or(Error::MissingPalette)?;
+    let mut table = palette_table(palette);
+    if let Some(Transparency::Palette(alpha)) = source.transparency {
+        apply_palette_alpha(&mut table, alpha);
+    }
+    Ok((table, palette.len()))
+}
+
+/// The transparent color to apply to a grayscale or RGB image, if it has one and
+/// the output has alpha.
+fn color_key<'a>(source: &Source<'a>, format: PixelFormat) -> Option<&'a Transparency> {
+    match (format, source.transparency) {
+        (PixelFormat::Rgba8, Some(key @ (Transparency::Gray(_) | Transparency::Rgb(_)))) => Some(key),
+        _ => None,
+    }
+}
+
+/// Converts one row of a grayscale or RGB image with a `tRNS` color to RGBA.
+/// `row` is one row of the image at any bit depth, and `out` is one RGBA row,
+/// `width × 4` bytes.
+///
+/// Pixels whose samples equal `key` get alpha 0 and the others 255. The
+/// comparison uses the samples at the image's own bit depth, before they're
+/// scaled to 8 bits: two 16-bit values with the same high byte can differ.
+/// `key` is `Transparency::Gray` for grayscale and `Transparency::Rgb` for RGB.
+pub(crate) fn convert_row_with_key(header: &ImageHeader, key: &Transparency, row: &[u8], out: &mut [u8]) {
+    let bit_depth = header.bit_depth;
+    // Samples per pixel in `row`: 1 for grayscale, 3 for RGB.
+    let channels = usize::from(header.color_type.channels());
+
+    // `out` holds exactly `width` RGBA pixels, so this stops before any padding
+    // bits at the end of `row`.
+    for (x, pixel) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        // 1. Read the pixel's samples as stored: 0-1 for 1-bit, 0-65535 for 16-bit.
+        //    `read_sample` counts samples across the row, so this pixel's first
+        //    sample is number `x * channels`. Gray is repeated, so both color
+        //    types give red, green and blue.
+        let sample = |channel: usize| read_sample(row, x * channels + channel, bit_depth);
+        let stored = match key {
+            Transparency::Gray(_) => [sample(0); 3],
+            _ => [sample(0), sample(1), sample(2)],
+        };
+
+        // 2. Compare with the key while the values are still at the image's bit
+        //    depth, which is how `tRNS` stores it. After scaling to 8 bits, 16-bit
+        //    0x1234 and 0x1235 would both be 0x12 and couldn't be told apart.
+        let transparent = match key {
+            Transparency::Gray(gray) => stored[0] == *gray,
+            Transparency::Rgb(rgb) => stored == *rgb,
+            Transparency::Palette(_) => unreachable!("indexed images use convert_indexed_row"),
+        };
+
+        // 3. Only now scale to 8 bits, and add the alpha.
+        let [r, g, b] = stored.map(|value| scale_to_8(value, bit_depth));
+        *pixel = [r, g, b, if transparent { 0 } else { 255 }];
+    }
 }
 
 /// Converts one row of an indexed image. `row` holds packed indices of
@@ -195,8 +270,12 @@ pub(crate) fn convert_indexed_row(
 #[cfg(test)]
 pub(crate) fn convert_row(source: &Source<'_>, row: &[u8], format: PixelFormat, out: &mut [u8]) -> Result<(), Error> {
     if source.header.color_type == ColorType::Indexed {
-        let palette = source.palette.ok_or(Error::MissingPalette)?;
-        return convert_indexed_row(&palette_table(palette), palette.len(), source.header.bit_depth, format, row, out);
+        let (table, entries) = indexed_table(source)?;
+        return convert_indexed_row(&table, entries, source.header.bit_depth, format, row, out);
+    }
+    if let Some(key) = color_key(source, format) {
+        convert_row_with_key(source.header, key, row, out);
+        return Ok(());
     }
     row_converter(source.header, format)(source.header, format, row, out);
     Ok(())
@@ -251,13 +330,21 @@ pub(crate) fn convert(source: &Source<'_>, format: PixelFormat, out: &mut Vec<u8
     let rows = source.data.chunks_exact(source.stride);
 
     if header.color_type == ColorType::Indexed {
-        let palette = source.palette.ok_or(Error::MissingPalette)?;
-        let table = palette_table(palette);
+        let (table, entries) = indexed_table(source)?;
 
         out.clear();
         out.resize(bitmap_size, 0);
         for (row, out_row) in rows.zip(out.chunks_exact_mut(bitmap_stride)) {
-            convert_indexed_row(&table, palette.len(), header.bit_depth, format, row, out_row)?;
+            convert_indexed_row(&table, entries, header.bit_depth, format, row, out_row)?;
+        }
+        return Ok(());
+    }
+
+    if let Some(key) = color_key(source, format) {
+        out.clear();
+        out.resize(bitmap_size, 0);
+        for (row, out_row) in rows.zip(out.chunks_exact_mut(bitmap_stride)) {
+            convert_row_with_key(header, key, row, out_row);
         }
         return Ok(());
     }

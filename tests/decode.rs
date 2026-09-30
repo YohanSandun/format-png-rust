@@ -130,6 +130,26 @@ fn invalid_palette_fixtures_fail_with_the_right_error() {
         ("plte_257_entries.png", Error::InvalidPaletteLength(771)),
         ("plte_too_many_entries.png", Error::TooManyPaletteEntries { entries: 3, bit_depth: 1 }),
         ("plte_in_grayscale.png", Error::UnexpectedPalette(ColorType::Grayscale)),
+        ("plte_after_trns.png", Error::TransparencyBeforePalette),
+    ];
+
+    for (name, expected) in cases {
+        assert_eq!(decode("invalid", name), Err(expected), "{name}");
+    }
+}
+
+#[test]
+fn invalid_transparency_fixtures_fail_with_the_right_error() {
+    let cases = [
+        ("trns_after_idat.png", Error::TransparencyAfterImageData),
+        ("trns_duplicate.png", Error::DuplicateTransparency),
+        ("trns_before_plte.png", Error::TransparencyBeforePalette),
+        ("trns_in_rgba.png", Error::UnexpectedTransparency(ColorType::Rgba)),
+        ("trns_in_gray_alpha.png", Error::UnexpectedTransparency(ColorType::GrayscaleAlpha)),
+        ("trns_gray_length_3.png", Error::InvalidTransparencyLength { color_type: ColorType::Grayscale, length: 3 }),
+        ("trns_rgb_length_2.png", Error::InvalidTransparencyLength { color_type: ColorType::Rgb, length: 2 }),
+        ("trns_indexed_empty.png", Error::InvalidTransparencyLength { color_type: ColorType::Indexed, length: 0 }),
+        ("trns_too_many_entries.png", Error::TooManyTransparencyEntries { entries: 5, palette_entries: 4 }),
     ];
 
     for (name, expected) in cases {

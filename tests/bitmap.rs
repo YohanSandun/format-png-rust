@@ -1,7 +1,4 @@
 //! Converts the fixtures in tests/data to RGB and RGBA bitmaps.
-//!
-//! `tRNS` isn't read yet, so `*_trns` fixtures are skipped so these tests don't
-//! pin down transparency behavior that will change.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,26 +41,62 @@ fn to_8_bits(value: u32, bit_depth: u8) -> u8 {
     }
 }
 
-/// The RGBA value generate.py's pixel (x, y) should convert to.
-fn expected_rgba(header: &ImageHeader, x: u32, y: u32) -> [u8; 4] {
-    let s = |channel| to_8_bits(sample(x, y, channel, header.bit_depth), header.bit_depth);
-    match header.color_type {
-        ColorType::Grayscale => [s(0), s(0), s(0), 255],
-        ColorType::GrayscaleAlpha => [s(0), s(0), s(0), s(1)],
-        ColorType::Rgb => [s(0), s(1), s(2), 255],
-        ColorType::Rgba => [s(0), s(1), s(2), s(3)],
-        ColorType::Indexed => {
-            let [r, g, b] = palette_color(x, y, header.bit_depth);
-            [r, g, b, 255]
+/// The `tRNS` chunk generate.py gives a fixture, written out here so the
+/// expected pixels don't depend on the code that parses it.
+enum Trns {
+    Gray(u32),
+    Rgb([u32; 3]),
+    Alpha(Vec<u8>),
+}
+
+fn trns_of(path: &Path) -> Option<Trns> {
+    match name(path).as_str() {
+        "gray_8_trns.png" => Some(Trns::Gray(37)),
+        "gray_2_trns.png" => Some(Trns::Gray(1)),
+        "rgb_8_trns.png" | "rgb_16_trns.png" => Some(Trns::Rgb([0, 53, 106])),
+        "indexed_8_trns.png" => Some(Trns::Alpha((0..=255).step_by(2).collect())),
+        "indexed_2_trns.png" => Some(Trns::Alpha(vec![0, 85, 170])),
+        other => {
+            assert!(!other.contains("_trns"), "{other}: add its tRNS chunk to trns_of");
+            None
         }
     }
 }
 
-fn expected(header: &ImageHeader, format: PixelFormat) -> Vec<u8> {
+/// The RGBA value generate.py's pixel (x, y) should convert to.
+fn expected_rgba(header: &ImageHeader, trns: Option<&Trns>, x: u32, y: u32) -> [u8; 4] {
+    let depth = header.bit_depth;
+    let raw = |channel| sample(x, y, channel, depth);
+    let s = |channel| to_8_bits(raw(channel), depth);
+    // tRNS colors are compared at the image's own bit depth, before scaling.
+    let key_alpha = |matches: bool| if matches { 0 } else { 255 };
+
+    match (header.color_type, trns) {
+        (ColorType::Grayscale, None) => [s(0), s(0), s(0), 255],
+        (ColorType::Grayscale, Some(Trns::Gray(key))) => [s(0), s(0), s(0), key_alpha(raw(0) == *key)],
+        (ColorType::GrayscaleAlpha, None) => [s(0), s(0), s(0), s(1)],
+        (ColorType::Rgb, None) => [s(0), s(1), s(2), 255],
+        (ColorType::Rgb, Some(Trns::Rgb(key))) => [s(0), s(1), s(2), key_alpha([raw(0), raw(1), raw(2)] == *key)],
+        (ColorType::Rgba, None) => [s(0), s(1), s(2), s(3)],
+        (ColorType::Indexed, trns) => {
+            let [r, g, b] = palette_color(x, y, depth);
+            let index = ((x + 3 * y) % (1 << depth)) as usize;
+            let alpha = match trns {
+                Some(Trns::Alpha(alpha)) => alpha.get(index).copied().unwrap_or(255),
+                _ => 255,
+            };
+            [r, g, b, alpha]
+        }
+        (color_type, _) => panic!("unexpected tRNS for {color_type:?}"),
+    }
+}
+
+fn expected(path: &Path, header: &ImageHeader, format: PixelFormat) -> Vec<u8> {
+    let trns = trns_of(path);
     let mut out = Vec::new();
     for y in 0..header.height {
         for x in 0..header.width {
-            let rgba = expected_rgba(header, x, y);
+            let rgba = expected_rgba(header, trns.as_ref(), x, y);
             match format {
                 PixelFormat::Rgba8 => out.extend_from_slice(&rgba),
                 PixelFormat::Rgb8 => out.extend_from_slice(&rgba[..3]),
@@ -75,10 +108,10 @@ fn expected(header: &ImageHeader, format: PixelFormat) -> Vec<u8> {
 }
 
 fn convertible_fixtures() -> impl Iterator<Item = (PathBuf, Vec<u8>, ImageHeader)> {
-    fixtures().into_iter().filter_map(|path| {
+    fixtures().into_iter().map(|path| {
         let data = fs::read(&path).unwrap();
         let header = format_png::read_header(&data).unwrap();
-        (!name(&path).contains("_trns")).then_some((path, data, header))
+        (path, data, header)
     })
 }
 
@@ -89,7 +122,7 @@ fn every_fixture_converts_to_rgba8() {
 
         assert_eq!(bitmap.format(), PixelFormat::Rgba8);
         assert_eq!((bitmap.width(), bitmap.height()), (header.width, header.height));
-        assert_eq!(bitmap.data(), expected(&header, PixelFormat::Rgba8), "{}", name(&path));
+        assert_eq!(bitmap.data(), expected(&path, &header, PixelFormat::Rgba8), "{}", name(&path));
     }
 }
 
@@ -98,7 +131,7 @@ fn every_fixture_converts_to_rgb8() {
     for (path, data, header) in convertible_fixtures() {
         let bitmap = format_png::decode_rgb8(&data).unwrap_or_else(|e| panic!("{}: {e}", name(&path)));
 
-        assert_eq!(bitmap.data(), expected(&header, PixelFormat::Rgb8), "{}", name(&path));
+        assert_eq!(bitmap.data(), expected(&path, &header, PixelFormat::Rgb8), "{}", name(&path));
     }
 }
 
@@ -130,7 +163,21 @@ fn indexed_fixtures_are_converted() {
     // Guards against the loops above quietly skipping every indexed fixture.
     let indexed = convertible_fixtures().filter(|(_, _, header)| header.color_type == ColorType::Indexed).count();
 
-    assert_eq!(indexed, 8);
+    assert_eq!(indexed, 10);
+}
+
+#[test]
+fn trns_fixtures_have_transparent_pixels() {
+    // Guards against the expected pixels quietly ignoring tRNS: each fixture
+    // has at least one pixel with alpha 0.
+    let mut trns = 0;
+    for (path, data, _) in convertible_fixtures().filter(|(path, _, _)| trns_of(path).is_some()) {
+        let bitmap = format_png::decode_rgba8(&data).unwrap();
+        trns += 1;
+
+        assert!(bitmap.data().as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0), "{}", name(&path));
+    }
+    assert_eq!(trns, 6);
 }
 
 #[test]
