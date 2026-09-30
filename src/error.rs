@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::png::ColorType;
+use crate::png::{ChunkType, ColorType};
 
 /// Everything that can go wrong while decoding a PNG.
 ///
@@ -114,6 +114,20 @@ pub enum Error {
     /// The `tRNS` chunk comes before `PLTE`: either an indexed image's `tRNS` has
     /// no palette before it, or a `PLTE` follows the `tRNS`.
     TransparencyBeforePalette,
+
+    /// An ancillary chunk's data has the wrong length for its type.
+    InvalidChunkLength { chunk_type: ChunkType, length: usize },
+
+    /// An ancillary chunk's data has the right length but an invalid value.
+    InvalidChunkData(ChunkType),
+
+    /// An ancillary chunk comes where the spec doesn't allow it, for example a
+    /// `gAMA` after `PLTE`. Only returned with `DecodeOptions::strict_ancillary`.
+    MisplacedChunk(ChunkType),
+
+    /// An ancillary chunk that may appear only once appears again. Only returned
+    /// with `DecodeOptions::strict_ancillary`.
+    DuplicateChunk(ChunkType),
 }
 
 impl fmt::Display for Error {
@@ -179,6 +193,12 @@ impl fmt::Display for Error {
             Error::DuplicateTransparency => f.write_str("more than one tRNS chunk"),
             Error::TransparencyAfterImageData => f.write_str("tRNS chunk comes after IDAT"),
             Error::TransparencyBeforePalette => f.write_str("tRNS chunk comes before PLTE"),
+            Error::InvalidChunkLength { chunk_type, length } => {
+                write!(f, "{chunk_type} chunk has invalid length {length}")
+            }
+            Error::InvalidChunkData(chunk_type) => write!(f, "{chunk_type} chunk has invalid data"),
+            Error::MisplacedChunk(chunk_type) => write!(f, "{chunk_type} chunk is not allowed here"),
+            Error::DuplicateChunk(chunk_type) => write!(f, "more than one {chunk_type} chunk"),
         }
     }
 }

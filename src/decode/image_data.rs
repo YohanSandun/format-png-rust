@@ -1,7 +1,9 @@
 use crate::ColorType;
 use super::chunk_reader::ChunkReader;
+use super::metadata::{preserve_chunk, read_ancillary};
+use super::options::DecodeOptions;
 use crate::error::Error;
-use crate::png::{ChunkType, ImageHeader, Palette, Transparency};
+use crate::png::{ChunkPosition, ChunkType, ImageChunks, ImageHeader, Palette, Transparency};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum IdatState {
@@ -10,56 +12,68 @@ enum IdatState {
     Done,
 }
 
-/// The chunks besides `IDAT` that decoding or converting the image needs, read
-/// on the way to `IEND`.
-#[derive(Debug, Default)]
-pub(crate) struct ImageChunks {
-    pub(crate) palette: Option<Palette>,
-    pub(crate) transparency: Option<Transparency>,
-}
-
 /// Reads the chunks after `IHDR` up to and including `IEND`, appending the data
 /// of every `IDAT` chunk to `out`, so it holds the whole zlib stream, and returns
-/// the other chunks the image needs. Remaining chunks are skipped. Nothing after
-/// `IEND` is read.
+/// the other chunks the image needs. Ancillary chunks are parsed into metadata
+/// and copied as raw chunks if `options` asks for it, and skipped otherwise.
+/// Nothing after `IEND` is read.
 ///
 /// Errors:
 /// - `Error::MissingImageData` if `IEND` comes before any `IDAT`.
 /// - `Error::NonConsecutiveImageData` if another chunk comes between two `IDAT`s.
 /// - `Error::MissingImageEnd` if the input ends before `IEND`.
 /// - `Error::TransparencyBeforePalette` if a `PLTE` follows a `tRNS`.
-/// - Any error from `read_palette`, `require_palette` or `read_transparency`.
+/// - Any error from `read_palette`, `require_palette`, `read_transparency` or
+///   `read_ancillary`.
 /// - Any error from `ChunkReader::next_chunk`.
 pub(crate) fn collect_image_data(
     chunks: &mut ChunkReader<'_>,
     header: &ImageHeader,
+    options: &DecodeOptions,
     out: &mut Vec<u8>,
 ) -> Result<ImageChunks, Error> {
     let mut state = IdatState::NotSeen;
     let mut found = ImageChunks::default();
 
     while let Some(chunk) = chunks.next_chunk()? {
-        match (chunk.chunk_type(), state) {
-            (ChunkType::PLTE, _) => {
+        let chunk_type = chunk.chunk_type();
+
+        // Any other chunk ends a run of IDATs. Updating the state first means the
+        // chunk that ends the run is still handled below.
+        if state == IdatState::InRun && chunk_type != ChunkType::IDAT {
+            state = IdatState::Done;
+        }
+        let position = chunk_position(state, found.palette.is_some());
+        if options.preserve_chunks {
+            preserve_chunk(&chunk, position, &mut found.ancillary);
+        }
+
+        match chunk_type {
+            ChunkType::PLTE => {
+                // `tRNS` must follow `PLTE`. After image data, `read_palette`
+                // reports the misplaced `PLTE` instead.
                 if found.transparency.is_some() && state == IdatState::NotSeen {
                     return Err(Error::TransparencyBeforePalette);
                 }
                 read_palette(chunk.data(), header, state, &mut found.palette)?;
             }
-            (ChunkType::TRNS, _) => {
+            ChunkType::TRNS => {
                 read_transparency(chunk.data(), header, state, found.palette.as_ref(), &mut found.transparency)?;
             }
-            (ChunkType::IDAT, IdatState::Done) => return Err(Error::NonConsecutiveImageData),
-            (ChunkType::IDAT, _) => {
-                if let IdatState::NotSeen = state {
-                    require_palette(header, found.palette.as_ref())?;
+            ChunkType::IDAT => {
+                match state {
+                    IdatState::Done => return Err(Error::NonConsecutiveImageData),
+                    IdatState::NotSeen => require_palette(header, found.palette.as_ref())?,
+                    IdatState::InRun => {}
                 }
                 out.extend_from_slice(chunk.data());
                 state = IdatState::InRun;
             }
-            (ChunkType::IEND, IdatState::NotSeen) => return Err(Error::MissingImageData),
-            (ChunkType::IEND, _) => return Ok(found),
-            (_, IdatState::InRun) => state = IdatState::Done,
+            ChunkType::IEND if state == IdatState::NotSeen => return Err(Error::MissingImageData),
+            ChunkType::IEND => return Ok(found),
+            _ if options.preserve_metadata => {
+                read_ancillary(&chunk, position, options.strict_ancillary, &mut found.metadata)?;
+            }
             _ => {}
         }
     }
@@ -67,6 +81,15 @@ pub(crate) fn collect_image_data(
     Err(Error::MissingImageEnd)
 }
 
+/// Where a chunk read now is, from whether image data has started and whether
+/// a `PLTE` has been read.
+fn chunk_position(state: IdatState, palette_seen: bool) -> ChunkPosition {
+    match state {
+        IdatState::NotSeen if palette_seen => ChunkPosition::BeforeImageData,
+        IdatState::NotSeen => ChunkPosition::BeforePalette,
+        IdatState::InRun | IdatState::Done => ChunkPosition::AfterImageData,
+    }
+}
 /// Handles a `PLTE` chunk: parses `data` into `palette`, which holds the palette
 /// found so far, if any. `state` says whether image data has started.
 ///

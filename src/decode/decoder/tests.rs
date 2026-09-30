@@ -711,3 +711,89 @@ fn decode_rejects_invalid_trns() {
 
     assert_eq!(Decoder::new().decode(&data), Err(Error::UnexpectedTransparency(ColorType::Rgba)));
 }
+
+// ---------- metadata and preserved chunks ----------
+
+/// A 1x1 RGBA PNG with a gAMA before the image data and a private chunk after it.
+fn rgba_1x1_with_ancillary() -> Vec<u8> {
+    png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"gAMA", &45455u32.to_be_bytes()),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 1, 2, 3, 4])),
+        chunk(b"ruSt", b"private"),
+        chunk(b"IEND", b""),
+    ])
+}
+
+fn keep_everything() -> DecodeOptions {
+    DecodeOptions { preserve_chunks: true, preserve_metadata: true, ..DecodeOptions::default() }
+}
+
+#[test]
+fn metadata_and_chunks_are_empty_by_default() {
+    let image = Decoder::new().decode(&rgba_1x1_with_ancillary()).unwrap();
+
+    assert!(image.metadata().is_empty());
+    assert!(image.ancillary_chunks().is_empty());
+}
+
+#[test]
+fn decode_keeps_metadata_and_chunks_when_asked() {
+    let image = Decoder::with_options(keep_everything()).decode(&rgba_1x1_with_ancillary()).unwrap();
+
+    assert_eq!(image.metadata().gamma().map(|g| g.scaled()), Some(45455));
+    let types: Vec<_> = image.ancillary_chunks().iter().map(|c| *c.chunk_type().as_bytes()).collect();
+    assert_eq!(types, [*b"gAMA", *b"ruSt"]);
+    assert_eq!(image.ancillary_chunks()[1].data(), b"private");
+}
+
+#[test]
+fn decoder_metadata_is_the_last_images() {
+    let mut decoder = Decoder::with_options(keep_everything());
+    let mut pixels = Vec::new();
+
+    decoder.decode_into(&rgba_1x1_with_ancillary(), &mut pixels).unwrap();
+    assert!(decoder.metadata().gamma().is_some());
+    assert_eq!(decoder.ancillary_chunks().len(), 2);
+
+    decoder.decode_into(&rgba_1x1(), &mut pixels).unwrap();
+    assert!(decoder.metadata().is_empty());
+    assert!(decoder.ancillary_chunks().is_empty());
+}
+
+#[test]
+fn decoder_metadata_is_cleared_by_a_failed_decode() {
+    let mut decoder = Decoder::with_options(keep_everything());
+    let mut pixels = Vec::new();
+
+    for broken in [&rgba_1x1()[..40], &b"not a png"[..]] {
+        decoder.decode_into(&rgba_1x1_with_ancillary(), &mut pixels).unwrap();
+
+        assert!(decoder.decode_into(broken, &mut pixels).is_err());
+        assert!(decoder.metadata().is_empty());
+        assert!(decoder.ancillary_chunks().is_empty());
+    }
+}
+
+#[test]
+fn decode_bitmap_keeps_metadata_too() {
+    let mut decoder = Decoder::with_options(keep_everything());
+
+    decoder.decode_bitmap(&rgba_1x1_with_ancillary(), PixelFormat::Rgb8).unwrap();
+
+    assert!(decoder.metadata().gamma().is_some());
+}
+
+#[test]
+fn strict_ancillary_fails_the_decode() {
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"gAMA", &[0, 0, 0, 0]),
+        chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 1, 2, 3, 4])),
+        chunk(b"IEND", b""),
+    ]);
+    let strict = DecodeOptions { preserve_metadata: true, strict_ancillary: true, ..DecodeOptions::default() };
+
+    assert!(Decoder::with_options(keep_everything()).decode(&data).is_ok());
+    assert_eq!(Decoder::with_options(strict).decode(&data), Err(Error::InvalidChunkData(ChunkType::GAMA)));
+}

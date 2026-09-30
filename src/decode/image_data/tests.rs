@@ -1,9 +1,11 @@
 #![cfg(test)]
 
-use super::{ImageChunks, collect_image_data};
+use super::collect_image_data;
 use crate::decode::chunk_reader::ChunkReader;
+use crate::decode::options::DecodeOptions;
 use crate::error::Error;
-use crate::png::{ColorType, ImageHeader, Interlace, Palette, SIGNATURE, Transparency};
+use crate::png::metadata::Time;
+use crate::png::{ChunkPosition, ColorType, ImageChunks, ImageHeader, Interlace, Palette, SIGNATURE, Transparency};
 
 fn header(color_type: ColorType) -> ImageHeader {
     ImageHeader { width: 1, height: 1, bit_depth: 8, color_type, interlace: Interlace::None }
@@ -33,9 +35,13 @@ fn png(chunks: &[Vec<u8>]) -> Vec<u8> {
 }
 
 fn collect_with(header: &ImageHeader, data: &[u8]) -> Result<(Vec<u8>, ImageChunks), Error> {
+    collect_with_options(header, &DecodeOptions::default(), data)
+}
+
+fn collect_with_options(header: &ImageHeader, options: &DecodeOptions, data: &[u8]) -> Result<(Vec<u8>, ImageChunks), Error> {
     let mut chunks = ChunkReader::new(data).unwrap().validate_crc(false);
     let mut out = Vec::new();
-    let found = collect_image_data(&mut chunks, header, &mut out)?;
+    let found = collect_image_data(&mut chunks, header, options, &mut out)?;
     Ok((out, found))
 }
 
@@ -94,7 +100,7 @@ fn stops_after_iend() {
     let mut chunks = ChunkReader::new(&data).unwrap().validate_crc(false);
     let mut out = Vec::new();
 
-    collect_image_data(&mut chunks, &rgb(), &mut out).unwrap();
+    collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut out).unwrap();
 
     let next = chunks.next_chunk().unwrap().unwrap();
     assert_eq!(next.chunk_type().as_bytes(), b"tEXt");
@@ -106,7 +112,7 @@ fn appends_to_existing_contents() {
     let mut chunks = ChunkReader::new(&data).unwrap().validate_crc(false);
     let mut out = b"xy".to_vec();
 
-    collect_image_data(&mut chunks, &rgb(), &mut out).unwrap();
+    collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut out).unwrap();
 
     assert_eq!(out, b"xyabc");
 }
@@ -169,7 +175,7 @@ fn crc_errors_are_passed_on() {
     let mut out = Vec::new();
 
     assert!(matches!(
-        collect_image_data(&mut chunks, &rgb(), &mut out),
+        collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut out),
         Err(Error::CrcMismatch { .. })
     ));
 }
@@ -409,4 +415,128 @@ fn invalid_trns_contents_fail() {
         transparency_of(&rgb(), &data),
         Err(Error::InvalidTransparencyLength { color_type: ColorType::Rgb, length: 3 })
     );
+}
+
+// ---------- ancillary chunks ----------
+
+fn options(preserve_chunks: bool, preserve_metadata: bool, strict_ancillary: bool) -> DecodeOptions {
+    DecodeOptions { preserve_chunks, preserve_metadata, strict_ancillary, ..DecodeOptions::default() }
+}
+
+const TIME: [u8; 7] = [0x07, 0xEA, 9, 30, 12, 0, 0]; // 2026-09-30 12:00:00
+
+/// An indexed image with an ancillary chunk in each position.
+fn indexed_with_ancillary() -> Vec<u8> {
+    png(&[
+        chunk(b"gAMA", &45455u32.to_be_bytes()),
+        chunk(b"PLTE", &[1, 2, 3]),
+        chunk(b"tRNS", &[0]),
+        chunk(b"ruSt", b"private"),
+        chunk(b"IDAT", b"ab"),
+        chunk(b"IDAT", b"c"),
+        chunk(b"tIME", &TIME),
+        chunk(b"tEXt", b"Author\0x"),
+        chunk(b"IEND", b""),
+    ])
+}
+
+#[test]
+fn ancillary_chunks_are_not_kept_by_default() {
+    let (out, found) = collect_with(&header(ColorType::Indexed), &indexed_with_ancillary()).unwrap();
+
+    assert_eq!(out, b"abc");
+    assert!(found.ancillary.is_empty());
+    assert!(found.metadata.is_empty());
+}
+
+#[test]
+fn preserve_chunks_keeps_every_ancillary_chunk_in_order() {
+    let (_, found) =
+        collect_with_options(&header(ColorType::Indexed), &options(true, false, false), &indexed_with_ancillary())
+            .unwrap();
+
+    let kept: Vec<_> = found.ancillary.iter().map(|c| (*c.chunk_type().as_bytes(), c.position())).collect();
+    assert_eq!(
+        kept,
+        [
+            (*b"gAMA", ChunkPosition::BeforePalette),
+            (*b"tRNS", ChunkPosition::BeforeImageData),
+            (*b"ruSt", ChunkPosition::BeforeImageData),
+            (*b"tIME", ChunkPosition::AfterImageData),
+            (*b"tEXt", ChunkPosition::AfterImageData),
+        ]
+    );
+    // Preserving doesn't parse metadata...
+    assert!(found.metadata.is_empty());
+    // ...and doesn't stop tRNS from being read as usual.
+    assert!(found.transparency.is_some());
+}
+
+#[test]
+fn chunks_without_plte_are_before_the_palette() {
+    let data = png(&[chunk(b"tEXt", b"a\0b"), chunk(b"IDAT", b"abc"), chunk(b"IEND", b"")]);
+
+    let (_, found) = collect_with_options(&rgb(), &options(true, false, false), &data).unwrap();
+
+    assert_eq!(found.ancillary[0].position(), ChunkPosition::BeforePalette);
+}
+
+#[test]
+fn preserve_metadata_parses_known_chunks() {
+    let (_, found) =
+        collect_with_options(&header(ColorType::Indexed), &options(false, true, false), &indexed_with_ancillary())
+            .unwrap();
+
+    assert_eq!(found.metadata.gamma().map(|g| g.scaled()), Some(45455));
+    assert!(found.ancillary.is_empty());
+}
+
+#[test]
+fn chunk_right_after_the_image_data_is_read() {
+    // tIME is the first chunk after the IDAT run, which ends the run.
+    let (_, found) =
+        collect_with_options(&header(ColorType::Indexed), &options(false, true, false), &indexed_with_ancillary())
+            .unwrap();
+
+    assert_eq!(found.metadata.time(), Some(Time { year: 2026, month: 9, day: 30, hour: 12, minute: 0, second: 0 }));
+}
+
+#[test]
+fn idat_after_a_chunk_after_idat_still_fails_with_metadata_on() {
+    let data = png(&[chunk(b"IDAT", b"ab"), chunk(b"tIME", &TIME), chunk(b"IDAT", b"cd"), chunk(b"IEND", b"")]);
+
+    assert_eq!(
+        collect_with_options(&rgb(), &options(true, true, false), &data).map(|_| ()),
+        Err(Error::NonConsecutiveImageData)
+    );
+}
+
+/// An RGB image with a gAMA after the image data, which isn't allowed.
+fn misplaced_gamma() -> Vec<u8> {
+    png(&[chunk(b"IDAT", b"abc"), chunk(b"gAMA", &45455u32.to_be_bytes()), chunk(b"IEND", b"")])
+}
+
+#[test]
+fn misplaced_ancillary_chunk_is_skipped_by_default() {
+    let (out, found) = collect_with_options(&rgb(), &options(false, true, false), &misplaced_gamma()).unwrap();
+
+    assert_eq!(out, b"abc");
+    assert_eq!(found.metadata.gamma(), None);
+}
+
+#[test]
+fn misplaced_ancillary_chunk_fails_when_strict() {
+    assert_eq!(
+        collect_with_options(&rgb(), &options(false, true, true), &misplaced_gamma()).map(|_| ()),
+        Err(Error::MisplacedChunk(crate::png::ChunkType::GAMA))
+    );
+}
+
+#[test]
+fn skipped_chunks_are_still_preserved() {
+    // A raw copy doesn't depend on the chunk being valid.
+    let (_, found) = collect_with_options(&rgb(), &options(true, true, false), &misplaced_gamma()).unwrap();
+
+    assert_eq!(found.ancillary.len(), 1);
+    assert_eq!(found.ancillary[0].position(), ChunkPosition::AfterImageData);
 }

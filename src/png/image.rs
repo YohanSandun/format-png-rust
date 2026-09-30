@@ -1,6 +1,17 @@
 use crate::convert::{Source, convert};
 use crate::error::Error;
-use crate::png::{Bitmap, ImageHeader, Palette, PixelFormat, Transparency};
+use crate::png::{Bitmap, ImageHeader, Metadata, OwnedChunk, Palette, PixelFormat, Transparency};
+
+/// The chunks besides `IHDR` and `IDAT` that the decoder read for an image.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ImageChunks {
+    pub(crate) palette: Option<Palette>,
+    pub(crate) transparency: Option<Transparency>,
+    /// Filled only with `DecodeOptions::preserve_metadata`.
+    pub(crate) metadata: Metadata,
+    /// Filled only with `DecodeOptions::preserve_chunks`, in file order.
+    pub(crate) ancillary: Vec<OwnedChunk>,
+}
 
 /// A decoded image, in the PNG's own pixel format.
 ///
@@ -17,20 +28,13 @@ pub struct Image {
     header: ImageHeader,
     stride: usize,
     data: Vec<u8>,
-    palette: Option<Palette>,
-    transparency: Option<Transparency>,
+    chunks: ImageChunks,
 }
 
 impl Image {
-    pub(crate) fn new(
-        header: ImageHeader,
-        stride: usize,
-        data: Vec<u8>,
-        palette: Option<Palette>,
-        transparency: Option<Transparency>,
-    ) -> Self {
+    pub(crate) fn new(header: ImageHeader, stride: usize, data: Vec<u8>, chunks: ImageChunks) -> Self {
         debug_assert_eq!(data.len(), stride * header.height as usize);
-        Self { header, stride, data, palette, transparency }
+        Self { header, stride, data, chunks }
     }
 
     /// The image's header.
@@ -74,14 +78,27 @@ impl Image {
     /// may have one as a suggestion for displays with few colors; it isn't used
     /// when converting them. Grayscale images never have one.
     pub fn palette(&self) -> Option<&Palette> {
-        self.palette.as_ref()
+        self.chunks.palette.as_ref()
     }
 
     /// The `tRNS` transparency, if the image has one: a transparent color for
     /// grayscale and RGB images, or alpha values for an indexed image's palette.
     /// Images with an alpha channel never have one.
     pub fn transparency(&self) -> Option<&Transparency> {
-        self.transparency.as_ref()
+        self.chunks.transparency.as_ref()
+    }
+
+    /// The known ancillary chunks, parsed. Empty unless the image was decoded with
+    /// [`DecodeOptions::preserve_metadata`](crate::DecodeOptions::preserve_metadata).
+    pub fn metadata(&self) -> &Metadata {
+        &self.chunks.metadata
+    }
+
+    /// Raw copies of every ancillary chunk, in file order, including private and
+    /// unknown ones. Empty unless the image was decoded with
+    /// [`DecodeOptions::preserve_chunks`](crate::DecodeOptions::preserve_chunks).
+    pub fn ancillary_chunks(&self) -> &[OwnedChunk] {
+        &self.chunks.ancillary
     }
 
     /// Consumes the image and returns its pixel data.
@@ -114,8 +131,8 @@ impl Image {
             header: &self.header,
             stride: self.stride,
             data: &self.data,
-            palette: self.palette.as_ref(),
-            transparency: self.transparency.as_ref(),
+            palette: self.chunks.palette.as_ref(),
+            transparency: self.chunks.transparency.as_ref(),
         }
     }
 }

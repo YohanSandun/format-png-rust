@@ -219,6 +219,19 @@ def valid():
     after_idat = png(13, 7, RGBA, 8)
     files["ancillary_after_idat.png"] = after_idat[:-len(IEND)] + chunk(b"tEXt", b"Author\x00format-png") + IEND
 
+    # Every chunk Metadata reads: sRGB with its matching gAMA and cHRM, pHYs, and
+    # tIME after the image data.
+    srgb_chrm = struct.pack(">8I", 31270, 32900, 64000, 33000, 30000, 60000, 15000, 6000)
+    before = (
+        chunk(b"sRGB", bytes([0]))
+        + chunk(b"gAMA", struct.pack(">I", 45455))
+        + chunk(b"cHRM", srgb_chrm)
+        + chunk(b"pHYs", struct.pack(">IIB", 3780, 3780, 1))
+    )
+    with_metadata = png(13, 7, RGB, 8, extra=before)
+    files["metadata.png"] = (with_metadata[:-len(IEND)]
+                             + chunk(b"tIME", struct.pack(">HBBBBB", 2026, 9, 30, 12, 34, 56)) + IEND)
+
     # A suggested palette, which RGB and RGBA images may have but don't use.
     files["rgb_8_plte.png"] = png(13, 7, RGB, 8, extra=plte(8))
 
@@ -292,6 +305,9 @@ def invalid():
         # Indices reach 30, past the end of a 16-color palette. Decodes, but can't
         # be converted to colors.
         "indexed_index_out_of_range.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + plte(4) + indexed_idat + IEND,
+        # Misplaced, but ancillary: decodes by default, fails only in strict mode
+        "gama_after_plte.png": SIGNATURE + ihdr(13, 7, 8, INDEXED) + plte(8) + chunk(b"gAMA", struct.pack(">I", 45455))
+            + indexed_idat + IEND,
         "plte_after_trns.png": SIGNATURE + ihdr(13, 7, 8, RGB) + trns_rgb + plte(8) + idat_of(RGB) + IEND,
 
         # tRNS

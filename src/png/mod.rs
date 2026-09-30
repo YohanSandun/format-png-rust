@@ -7,6 +7,8 @@ pub(crate) mod crc;
 mod filter;
 mod header;
 mod image;
+pub mod metadata;
+mod owned_chunk;
 pub(crate) mod palette;
 mod transparency;
 
@@ -14,7 +16,10 @@ pub use bitmap::{Bitmap, PixelFormat};
 pub use chunk::{Chunk, ChunkType};
 pub use filter::FilterType;
 pub use header::{ColorType, ImageHeader, Interlace};
+pub(crate) use image::ImageChunks;
 pub use image::Image;
+pub use metadata::Metadata;
+pub use owned_chunk::{ChunkPosition, OwnedChunk};
 pub use palette::Palette;
 pub use transparency::{PaletteAlpha, Transparency};
 

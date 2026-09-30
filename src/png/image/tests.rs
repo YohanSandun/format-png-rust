@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use super::Image;
+use super::{Image, ImageChunks};
 use crate::error::Error;
 use crate::png::{ColorType, ImageHeader, Interlace, Palette, PaletteAlpha, PixelFormat, Transparency};
 
@@ -13,7 +13,7 @@ fn image() -> Image {
         color_type: ColorType::Rgb,
         interlace: Interlace::None,
     };
-    Image::new(header, 6, (0..18).collect(), None, None)
+    Image::new(header, 6, (0..18).collect(), ImageChunks::default())
 }
 
 /// 3x1 indexed, 8-bit, with `pixels` as indices into a 2-color palette.
@@ -26,7 +26,7 @@ fn indexed_image(pixels: [u8; 3]) -> Image {
         interlace: Interlace::None,
     };
     let palette = Palette::parse(&[10, 20, 30, 40, 50, 60], &header).unwrap();
-    Image::new(header, 3, pixels.to_vec(), Some(palette), None)
+    Image::new(header, 3, pixels.to_vec(), ImageChunks { palette: Some(palette), ..ImageChunks::default() })
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn transparency_is_none_without_trns() {
 fn to_bitmap_applies_transparency() {
     // Pixel (1, 0) of `image()` is 3, 4, 5.
     let mut image = image();
-    image.transparency = Some(Transparency::Rgb([3, 4, 5]));
+    image.chunks.transparency = Some(Transparency::Rgb([3, 4, 5]));
 
     let bitmap = image.to_bitmap(PixelFormat::Rgba8).unwrap();
 
@@ -126,7 +126,7 @@ fn to_bitmap_applies_transparency() {
 #[test]
 fn to_bitmap_of_indexed_image_applies_palette_alpha() {
     let mut image = indexed_image([1, 0, 1]);
-    image.transparency = Some(Transparency::Palette(PaletteAlpha::new(&[255, 0])));
+    image.chunks.transparency = Some(Transparency::Palette(PaletteAlpha::new(&[255, 0])));
 
     let bitmap = image.to_bitmap(PixelFormat::Rgba8).unwrap();
 

@@ -32,6 +32,9 @@
 //! - [`read_header`] reads only the image header.
 //! - A [`ChunkReader`] returns every chunk raw, including ancillary, private and
 //!   unknown ones. Chunk types are in the [`png`] module.
+//! - [`DecodeOptions::preserve_metadata`] parses known ancillary chunks into
+//!   [`Image::metadata`], and [`DecodeOptions::preserve_chunks`] keeps raw copies
+//!   of all of them in [`Image::ancillary_chunks`].
 //!
 //! ```
 //! let data = std::fs::read("tests/data/valid/rgba_16.png")?;
@@ -44,8 +47,9 @@
 //!
 //! # Not supported yet
 //!
-//! Ancillary chunks other than `tRNS` (such as `gAMA`, `iCCP` and text) are
-//! skipped by the decoder, but a [`ChunkReader`] still returns them.
+//! Text, `iCCP` and most other ancillary chunks aren't parsed yet; see
+//! [`png::metadata`] for the ones that are. The others can be kept raw with
+//! [`DecodeOptions::preserve_chunks`], and a [`ChunkReader`] returns them all.
 
 pub mod png;
 mod convert;
@@ -55,7 +59,10 @@ mod error;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use error::Error;
-pub use png::{Bitmap, ColorType, Image, ImageHeader, Interlace, Palette, PaletteAlpha, PixelFormat, Transparency};
+pub use png::{
+    Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha,
+    PixelFormat, Transparency,
+};
 
 /// Decodes a PNG to 8-bit RGBA, ready for a browser canvas's `ImageData`.
 ///

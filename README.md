@@ -18,7 +18,9 @@ chunk of the file.
 - CRC checks, which can be turned off
 - Image data split over any number of `IDAT` chunks
 - Reusable `Decoder` that keeps its decompressor and buffers between images
-- Raw access to every chunk, including private and unknown ones
+- Raw access to every chunk, including private and unknown ones, while reading
+  or kept with the decoded image
+- Metadata: `gAMA`, `cHRM`, `sRGB`, `pHYs` and `tIME`, parsed into typed values
 - Decompressed size capped at exactly what the header allows, so a small
   malicious file can't expand without limit
 
@@ -143,6 +145,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `Decoder::chunks` does the same, and takes CRC checking from the decoder's options.
 
+### Keep metadata and chunks with the image
+
+Two options keep ancillary chunks while decoding: `preserve_metadata` parses the
+known ones into `Image::metadata`, and `preserve_chunks` keeps a raw copy of
+every one, including private and unknown chunks, in `Image::ancillary_chunks`.
+Both are off by default.
+
+```rust,no_run
+use format_png::{DecodeOptions, Decoder};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = DecodeOptions { preserve_metadata: true, preserve_chunks: true, ..DecodeOptions::default() };
+    let image = Decoder::with_options(options).decode(&std::fs::read("image.png")?)?;
+
+    if let Some(dpi) = image.metadata().physical_dimensions().and_then(|p| p.dots_per_inch()) {
+        println!("{dpi:?} dpi");
+    }
+    for chunk in image.ancillary_chunks() {
+        println!("{}: {} bytes", chunk.chunk_type(), chunk.data().len());
+    }
+    Ok(())
+}
+```
+
+An invalid or misplaced ancillary chunk is skipped rather than failing the
+decode, as the PNG spec allows. Set `strict_ancillary` to get an error instead.
+
 ## Conversion rules
 
 `to_bitmap`, `decode_rgba8`, `decode_rgb8` and the `Decoder` bitmap methods convert pixels like this:
@@ -170,10 +199,11 @@ data, and so on. Malformed input returns an error; it doesn't panic. `Error` is
 
 ## Not supported yet
 
-- **Ancillary chunks besides `tRNS`** (`gAMA`, `iCCP`, text, and so on) are skipped by
-  the decoder. They're still available through `ChunkReader`.
-- **`DecodeOptions::preserve_chunks` and `preserve_metadata`** exist but have no
-  effect yet.
+- **Parsing text (`tEXt`, `zTXt`, `iTXt`), `iCCP`, `bKGD`, `sBIT`, `eXIf` and other
+  ancillary chunks.** They're kept as raw chunks with `preserve_chunks`, and
+  available through `ChunkReader`.
+- **Color management:** gamma, chromaticities and ICC profiles are read but
+  not applied.
 - **Encoding.**
 
 ## Development

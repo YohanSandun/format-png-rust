@@ -1,4 +1,4 @@
-﻿/// Settings for a [`Decoder`](crate::Decoder).
+/// Settings for a [`Decoder`](crate::Decoder).
 ///
 /// Use struct update syntax to change only some of them:
 ///
@@ -12,11 +12,19 @@ pub struct DecodeOptions {
     /// Whether to validate CRC values of PNG chunks. On by default.
     pub validate_crc: bool,
 
-    /// Whether to preserve ancillary chunks in the decoded result. Not used yet.
+    /// Whether to keep a raw copy of every ancillary chunk, including private and
+    /// unknown ones, as [`OwnedChunk`](crate::OwnedChunk)s. Off by default.
     pub preserve_chunks: bool,
 
-    /// Whether to preserve PNG metadata in the decoded result. Not used yet.
+    /// Whether to parse known ancillary chunks, such as `gAMA` and `tIME`, into
+    /// [`Metadata`](crate::Metadata). Off by default.
     pub preserve_metadata: bool,
+
+    /// Whether an invalid, misplaced or repeated ancillary chunk fails the decode.
+    /// Off by default: such chunks are skipped, as the PNG spec allows, so a bad
+    /// piece of metadata doesn't stop an image from decoding. Only applies to
+    /// chunks read into [`Metadata`](crate::Metadata); `tRNS` is always checked.
+    pub strict_ancillary: bool,
 }
 
 impl Default for DecodeOptions {
@@ -25,6 +33,7 @@ impl Default for DecodeOptions {
             validate_crc: true,
             preserve_chunks: false,
             preserve_metadata: false,
+            strict_ancillary: false,
         }
     }
 }

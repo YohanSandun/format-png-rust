@@ -6,7 +6,10 @@ use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
 use crate::convert::{Source, convert, is_unchanged};
-use crate::png::{Bitmap, ChunkType, Image, ImageHeader, Interlace, Palette, PixelFormat, Transparency};
+use crate::png::{
+    Bitmap, ChunkType, Image, ImageChunks, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PixelFormat,
+    Transparency,
+};
 use rust_deflate::{Decompressor, OutputOptions};
 
 /// A reusable PNG decoder.
@@ -43,10 +46,9 @@ pub struct Decoder {
     pass: Vec<u8>,
     /// The decoded image in its own format, before it's converted to a bitmap.
     pixels: Vec<u8>,
-    /// The `PLTE` palette of the last image decoded, if it had one.
-    palette: Option<Palette>,
-    /// The `tRNS` transparency of the last image decoded, if it had one.
-    transparency: Option<Transparency>,
+    /// The chunks besides `IHDR` and `IDAT` of the last image decoded: palette,
+    /// transparency, metadata and preserved chunks.
+    chunks: ImageChunks,
 }
 
 impl Decoder {
@@ -70,8 +72,7 @@ impl Decoder {
             scanlines: Vec::new(),
             pass: Vec::new(),
             pixels: Vec::new(),
-            palette: None,
-            transparency: None,
+            chunks: ImageChunks::default(),
         }
     }
 
@@ -84,13 +85,27 @@ impl Decoder {
     /// or another decode method, or `None` if it had none or decoding failed.
     /// Indexed images always have one; see [`Image::palette`].
     pub fn palette(&self) -> Option<&Palette> {
-        self.palette.as_ref()
+        self.chunks.palette.as_ref()
     }
 
     /// The `tRNS` transparency of the last image decoded, like [`palette`](Self::palette);
     /// see [`Image::transparency`].
     pub fn transparency(&self) -> Option<&Transparency> {
-        self.transparency.as_ref()
+        self.chunks.transparency.as_ref()
+    }
+
+    /// The known ancillary chunks of the last image decoded, like
+    /// [`palette`](Self::palette). Empty unless
+    /// [`DecodeOptions::preserve_metadata`] is set; see [`Image::metadata`].
+    pub fn metadata(&self) -> &Metadata {
+        &self.chunks.metadata
+    }
+
+    /// Raw copies of the ancillary chunks of the last image decoded, like
+    /// [`palette`](Self::palette). Empty unless
+    /// [`DecodeOptions::preserve_chunks`] is set; see [`Image::ancillary_chunks`].
+    pub fn ancillary_chunks(&self) -> &[OwnedChunk] {
+        &self.chunks.ancillary
     }
 
     /// Consumes the decoder and returns its decompressor, to reuse elsewhere.
@@ -139,7 +154,7 @@ impl Decoder {
     pub fn decode(&mut self, data: &[u8]) -> Result<Image, Error> {
         let mut pixels = Vec::new();
         let header = self.decode_into(data, &mut pixels)?;
-        Ok(Image::new(header, header.stride()?, pixels, self.palette.clone(), self.transparency.clone()))
+        Ok(Image::new(header, header.stride()?, pixels, self.chunks.clone()))
     }
 
     /// Like [`decode`](Self::decode), but writes the pixels to `out` and returns
@@ -173,15 +188,18 @@ impl Decoder {
     /// - [`Error::ImageTooLarge`] if the image doesn't fit in memory on this platform.
     pub fn decode_into(&mut self, data: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
         // Cleared first, so a failed decode doesn't leave the last image's chunks.
-        self.palette = None;
-        self.transparency = None;
+        // Clearing the vector rather than replacing it keeps its allocation.
+        self.chunks.palette = None;
+        self.chunks.transparency = None;
+        self.chunks.metadata = Metadata::default();
+        self.chunks.ancillary.clear();
 
         let mut chunks = self.chunks(data)?;
         let header = Self::read_image_header(&mut chunks)?;
         let scanline_size = header.scanline_size()?;
 
         self.compressed.clear();
-        let found = collect_image_data(&mut chunks, &header, &mut self.compressed)?;
+        let found = collect_image_data(&mut chunks, &header, &self.options, &mut self.compressed)?;
 
         // The decompressor appends, so clear what the previous image left here.
         self.scanlines.clear();
@@ -209,8 +227,7 @@ impl Decoder {
             Interlace::Adam7 => self.unfilter_adam7(&header, out)?,
         }
 
-        self.palette = found.palette;
-        self.transparency = found.transparency;
+        self.chunks = found;
         Ok(header)
     }
 
@@ -260,8 +277,8 @@ impl Decoder {
                 header: &header,
                 stride: header.stride()?,
                 data: &pixels,
-                palette: self.palette.as_ref(),
-                transparency: self.transparency.as_ref(),
+                palette: self.chunks.palette.as_ref(),
+                transparency: self.chunks.transparency.as_ref(),
             };
             convert(&source, format, out)?;
             Ok(header)

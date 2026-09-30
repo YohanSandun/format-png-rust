@@ -2,6 +2,7 @@ mod chunk_reader;
 mod decoder;
 mod deinterlace;
 mod image_data;
+mod metadata;
 mod options;
 mod unfilter;
 

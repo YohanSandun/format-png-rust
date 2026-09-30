@@ -28,6 +28,16 @@ impl ChunkType {
     pub const IEND: ChunkType = ChunkType(*b"IEND");
     /// Transparency for images without an alpha channel.
     pub const TRNS: ChunkType = ChunkType(*b"tRNS");
+    /// Image gamma.
+    pub const GAMA: ChunkType = ChunkType(*b"gAMA");
+    /// Primary chromaticities and white point.
+    pub const CHRM: ChunkType = ChunkType(*b"cHRM");
+    /// The image is in the sRGB color space.
+    pub const SRGB: ChunkType = ChunkType(*b"sRGB");
+    /// Physical pixel dimensions.
+    pub const PHYS: ChunkType = ChunkType(*b"pHYs");
+    /// Last modification time.
+    pub const TIME: ChunkType = ChunkType(*b"tIME");
 
     /// Creates a chunk type, checking every byte is an ASCII letter.
     ///

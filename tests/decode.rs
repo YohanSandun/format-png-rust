@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use format_png::{ColorType, Error, ImageHeader};
+use format_png::png::ChunkType;
+use format_png::png::metadata::{RenderingIntent, Time, Unit};
+use format_png::{ChunkPosition, ColorType, DecodeOptions, Decoder, Error, ImageHeader};
 
 fn data_dir(dir: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(dir)
@@ -175,8 +177,9 @@ fn indexed_fixtures_have_the_generated_palette() {
 
 #[test]
 fn every_invalid_fixture_fails() {
-    // Its indices decode; converting them to colors is what fails (tests/bitmap.rs).
-    let fails_only_when_converted = ["indexed_index_out_of_range.png"];
+    // Decode by default: the first fails only when converted to colors
+    // (tests/bitmap.rs), the second only in strict mode (below).
+    let fails_only_when_converted = ["indexed_index_out_of_range.png", "gama_after_plte.png"];
 
     for path in fixtures("invalid") {
         let name = path.file_name().unwrap().to_string_lossy();
@@ -185,5 +188,72 @@ fn every_invalid_fixture_fails() {
         }
 
         assert!(format_png::decode(&fs::read(&path).unwrap()).is_err(), "{name} decoded");
+    }
+}
+
+// ---------- metadata ----------
+
+fn read(dir: &str, name: &str) -> Vec<u8> {
+    fs::read(data_dir(dir).join(name)).unwrap()
+}
+
+fn keep_everything() -> DecodeOptions {
+    DecodeOptions { preserve_chunks: true, preserve_metadata: true, ..DecodeOptions::default() }
+}
+
+#[test]
+fn metadata_fixture_has_every_known_chunk() {
+    let image = Decoder::with_options(keep_everything()).decode(&read("valid", "metadata.png")).unwrap();
+    let metadata = image.metadata();
+
+    assert_eq!(metadata.srgb(), Some(RenderingIntent::Perceptual));
+    assert_eq!(metadata.gamma().map(|g| g.scaled()), Some(45455));
+    assert_eq!(metadata.chromaticities().map(|c| (c.white_x, c.blue_y)), Some((31270, 6000)));
+    let physical = metadata.physical_dimensions().unwrap();
+    assert_eq!((physical.x, physical.y, physical.unit), (3780, 3780, Unit::Meter));
+    assert_eq!(metadata.time(), Some(Time { year: 2026, month: 9, day: 30, hour: 12, minute: 34, second: 56 }));
+}
+
+#[test]
+fn ancillary_fixture_keeps_every_chunk_in_order() {
+    let image = Decoder::with_options(keep_everything()).decode(&read("valid", "ancillary_chunks.png")).unwrap();
+
+    let types: Vec<_> = image.ancillary_chunks().iter().map(|c| c.chunk_type().to_string()).collect();
+    assert_eq!(types, ["gAMA", "pHYs", "tEXt", "zTXt", "ruSt"]);
+    assert!(image.ancillary_chunks().iter().all(|c| c.position() == ChunkPosition::BeforePalette));
+    // Only the chunks Metadata knows are parsed.
+    assert!(image.metadata().gamma().is_some());
+    assert!(image.metadata().physical_dimensions().is_some());
+}
+
+#[test]
+fn chunk_after_the_image_data_is_kept() {
+    let image = Decoder::with_options(keep_everything()).decode(&read("valid", "ancillary_after_idat.png")).unwrap();
+
+    let text = image.ancillary_chunks().last().unwrap();
+    assert_eq!(text.chunk_type().to_string(), "tEXt");
+    assert_eq!(text.data(), b"Author\0format-png");
+    assert_eq!(text.position(), ChunkPosition::AfterImageData);
+}
+
+#[test]
+fn misplaced_ancillary_fixture_decodes_unless_strict() {
+    let data = read("invalid", "gama_after_plte.png");
+
+    let image = Decoder::with_options(keep_everything()).decode(&data).unwrap();
+    assert_eq!(image.metadata().gamma(), None);
+
+    let strict = DecodeOptions { strict_ancillary: true, ..keep_everything() };
+    assert_eq!(Decoder::with_options(strict).decode(&data), Err(Error::MisplacedChunk(ChunkType::GAMA)));
+}
+
+#[test]
+fn every_valid_fixture_decodes_with_everything_kept() {
+    let mut decoder = Decoder::with_options(DecodeOptions { strict_ancillary: true, ..keep_everything() });
+
+    for path in fixtures("valid") {
+        let image = decoder.decode(&fs::read(&path).unwrap()).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert_eq!(image.data(), expected_pixels(image.header()), "{}", path.display());
     }
 }
