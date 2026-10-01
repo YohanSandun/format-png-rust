@@ -38,6 +38,12 @@ impl ChunkType {
     pub const PHYS: ChunkType = ChunkType(*b"pHYs");
     /// Last modification time.
     pub const TIME: ChunkType = ChunkType(*b"tIME");
+    /// Uncompressed Latin-1 text.
+    pub const TEXT: ChunkType = ChunkType(*b"tEXt");
+    /// Compressed Latin-1 text.
+    pub const ZTXT: ChunkType = ChunkType(*b"zTXt");
+    /// International (UTF-8) text, compressed or not.
+    pub const ITXT: ChunkType = ChunkType(*b"iTXt");
 
     /// Creates a chunk type, checking every byte is an ASCII letter.
     ///

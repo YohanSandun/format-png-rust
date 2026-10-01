@@ -22,10 +22,12 @@
 
 mod color;
 mod physical;
+mod text;
 mod time;
 
 pub use color::{Chromaticities, Gamma, RenderingIntent};
 pub use physical::{PhysicalDimensions, Unit};
+pub use text::{Text, TextKind};
 pub use time::Time;
 
 /// The known ancillary chunks of an image, parsed.
@@ -41,6 +43,7 @@ pub struct Metadata {
     pub(crate) srgb: Option<RenderingIntent>,
     pub(crate) physical_dimensions: Option<PhysicalDimensions>,
     pub(crate) time: Option<Time>,
+    pub(crate) text: Vec<Text>,
 }
 
 impl Metadata {
@@ -67,6 +70,12 @@ impl Metadata {
     /// The `tIME` chunk: when the image was last modified.
     pub fn time(&self) -> Option<Time> {
         self.time
+    }
+
+    /// The `tEXt`, `zTXt` and `iTXt` chunks, in file order. A keyword may appear
+    /// more than once.
+    pub fn text(&self) -> &[Text] {
+        &self.text
     }
 
     /// Whether no known chunk was found.

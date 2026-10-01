@@ -1,0 +1,219 @@
+use rust_deflate::{Decompressor, OutputOptions};
+
+use crate::error::Error;
+use crate::png::ChunkType;
+
+/// The longest keyword the spec allows, in bytes.
+const MAX_KEYWORD_LENGTH: usize = 79;
+
+/// The only compression method defined for `zTXt` and `iTXt`: zlib.
+const COMPRESSION_METHOD_ZLIB: u8 = 0;
+
+/// Which chunk a [`Text`] was read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextKind {
+    /// `tEXt`: uncompressed Latin-1 text.
+    Plain,
+    /// `zTXt`: zlib-compressed Latin-1 text.
+    Compressed,
+    /// `iTXt`: UTF-8 text with a language tag, compressed or not.
+    International {
+        /// Whether the text was zlib-compressed in the file.
+        compressed: bool,
+    },
+}
+
+/// A `tEXt`, `zTXt` or `iTXt` chunk: a keyword and its text, such as
+/// `Title` or `Author`.
+///
+/// The text is decoded to a `String` whatever the chunk: Latin-1 for `tEXt` and
+/// `zTXt`, UTF-8 for `iTXt`, decompressed when the chunk was compressed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Text {
+    /// 1 to 79 bytes of printable Latin-1, such as `Title`, `Author` or `Comment`.
+    pub keyword: String,
+    /// The text itself.
+    pub text: String,
+    /// The `iTXt` language tag, such as `en` or `nb-NO`. Empty for `tEXt` and
+    /// `zTXt`, and for `iTXt` chunks that don't give one.
+    pub language_tag: String,
+    /// The `iTXt` keyword translated into the language. Empty for `tEXt` and
+    /// `zTXt`, and for `iTXt` chunks that don't give one.
+    pub translated_keyword: String,
+    /// Which chunk this was read from.
+    pub kind: TextKind,
+}
+
+impl Text {
+    /// Parses `tEXt` chunk data: the keyword, a null byte, then the text in
+    /// Latin-1, without a terminating null.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::InvalidChunkData`] if there is no null byte or the keyword is invalid.
+    pub fn parse_text(data: &[u8]) -> Result<Self, Error> {
+        let (keyword, text) = read_keyword(data, ChunkType::TEXT)?;
+
+        Ok(Self {
+            keyword,
+            text: latin1_to_string(text),
+            language_tag: String::new(),
+            translated_keyword: String::new(),
+            kind: TextKind::Plain,
+        })
+    }
+
+    /// Parses `zTXt` chunk data: the keyword, a null byte, the compression method
+    /// (0), then the Latin-1 text as a zlib stream.
+    ///
+    /// `max_size` caps the decompressed text, so a small chunk can't expand
+    /// without limit.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::InvalidChunkData`] if there is no null byte, the keyword is
+    ///   invalid, or the compression method isn't 0.
+    /// - [`Error::Decompression`] if the zlib stream is corrupt or decompresses to
+    ///   more than `max_size` bytes.
+    pub fn parse_compressed(
+        data: &[u8],
+        decompressor: &mut Decompressor,
+        max_size: usize,
+    ) -> Result<Self, Error> {
+        let (keyword, rest) = read_keyword(data, ChunkType::ZTXT)?;
+        let [method, compressed @ ..] = rest else {
+            return Err(Error::InvalidChunkData(ChunkType::ZTXT));
+        };
+        if *method != COMPRESSION_METHOD_ZLIB {
+            return Err(Error::InvalidChunkData(ChunkType::ZTXT));
+        }
+        let text = decompress(compressed, decompressor, max_size)?;
+
+        Ok(Self {
+            keyword,
+            text: latin1_to_string(&text),
+            language_tag: String::new(),
+            translated_keyword: String::new(),
+            kind: TextKind::Compressed,
+        })
+    }
+
+    /// Parses `iTXt` chunk data: the keyword, a null byte, the compression flag
+    /// (0 or 1), the compression method (0), the language tag, a null byte, the
+    /// translated keyword in UTF-8, a null byte, then the UTF-8 text, as a zlib
+    /// stream if the flag is 1.
+    ///
+    /// `max_size` caps the decompressed text, as for
+    /// [`parse_compressed`](Self::parse_compressed).
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::InvalidChunkData`] if a null byte is missing, the keyword is
+    ///   invalid, the flag or method has an unknown value, or the translated
+    ///   keyword or text isn't valid UTF-8.
+    /// - [`Error::Decompression`] if the text is compressed and the zlib stream is
+    ///   corrupt or decompresses to more than `max_size` bytes.
+    pub fn parse_international(
+        data: &[u8],
+        decompressor: &mut Decompressor,
+        max_size: usize,
+    ) -> Result<Self, Error> {
+        let (keyword, rest) = read_keyword(data, ChunkType::ITXT)?;
+
+        let [flag, method, rest @ ..] = rest else {
+            return Err(Error::InvalidChunkData(ChunkType::ITXT));
+        };
+        let compressed = match *flag {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::InvalidChunkData(ChunkType::ITXT)),
+        };
+        if *method != 0 {
+            return Err(Error::InvalidChunkData(ChunkType::ITXT));
+        }
+
+        let (language_tag_data, rest) = split_at_null(rest, ChunkType::ITXT)?;
+        let language_tag = latin1_to_string(language_tag_data);
+
+        let (translated_keyword_data, text_data) = split_at_null(rest, ChunkType::ITXT)?;
+        let translated_keyword = utf8_to_string(translated_keyword_data, ChunkType::ITXT)?;
+
+        let text = if compressed {
+            let decompressed = decompress(text_data, decompressor, max_size)?;
+            utf8_to_string(&decompressed, ChunkType::ITXT)?
+        } else {
+            utf8_to_string(text_data, ChunkType::ITXT)?
+        };
+
+        Ok(Self {
+            keyword,
+            text,
+            translated_keyword,
+            language_tag,
+            kind: TextKind::International { compressed },
+        })
+    }
+
+    /// The type of the chunk this was read from.
+    pub fn chunk_type(&self) -> ChunkType {
+        match self.kind {
+            TextKind::Plain => ChunkType::TEXT,
+            TextKind::Compressed => ChunkType::ZTXT,
+            TextKind::International { .. } => ChunkType::ITXT,
+        }
+    }
+}
+
+/// Splits `data` at its first null byte, returning the bytes before and after it.
+/// Returns `Error::InvalidChunkData` for `chunk_type` if there is no null byte.
+fn split_at_null(data: &[u8], chunk_type: ChunkType) -> Result<(&[u8], &[u8]), Error> {
+    for i in 0..data.len() {
+        if data[i] == b'\0' {
+            return Ok((&data[..i], &data[i + 1..]));
+        }
+    }
+    Err(Error::InvalidChunkData(chunk_type))
+}
+
+/// Reads the null-terminated keyword at the start of `data` and returns it with
+/// the bytes after the null.
+///
+/// A valid keyword is 1 to `MAX_KEYWORD_LENGTH` bytes of printable Latin-1
+/// (32-126 and 161-255), with no leading, trailing or consecutive spaces.
+/// Returns `Error::InvalidChunkData` for `chunk_type` otherwise.
+fn read_keyword(data: &[u8], chunk_type: ChunkType) -> Result<(String, &[u8]), Error> {
+    let split = split_at_null(data, chunk_type)?;
+    let keyword = latin1_to_string(split.0);
+    if keyword.is_empty() || keyword.len() > MAX_KEYWORD_LENGTH {
+        return Err(Error::InvalidChunkData(chunk_type));
+    }
+    Ok((keyword, split.1))
+}
+
+/// Decodes Latin-1 (ISO 8859-1) bytes, where each byte is the code point of the
+/// same value.
+fn latin1_to_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| b as char).collect()
+}
+
+/// Decodes UTF-8 bytes, returning `Error::InvalidChunkData` for `chunk_type` if
+/// they aren't valid.
+fn utf8_to_string(bytes: &[u8], chunk_type: ChunkType) -> Result<String, Error> {
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| Error::InvalidChunkData(chunk_type))
+}
+
+/// Decompresses a zlib stream of at most `max_size` bytes, reusing `decompressor`.
+fn decompress(
+    data: &[u8],
+    decompressor: &mut Decompressor,
+    max_size: usize,
+) -> Result<Vec<u8>, Error> {
+    decompressor
+        .decompress_zlib_with(data, OutputOptions::new().max_output(max_size))
+        .map_err(|_| Error::InvalidChunkData(ChunkType::ZTXT))
+}
+
+#[cfg(test)]
+mod tests;

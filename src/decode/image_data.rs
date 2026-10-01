@@ -1,3 +1,5 @@
+use rust_deflate::Decompressor;
+
 use crate::ColorType;
 use super::chunk_reader::ChunkReader;
 use super::metadata::{preserve_chunk, read_ancillary};
@@ -30,6 +32,7 @@ pub(crate) fn collect_image_data(
     chunks: &mut ChunkReader<'_>,
     header: &ImageHeader,
     options: &DecodeOptions,
+    decompressor: &mut Decompressor,
     out: &mut Vec<u8>,
 ) -> Result<ImageChunks, Error> {
     let mut state = IdatState::NotSeen;
@@ -72,7 +75,7 @@ pub(crate) fn collect_image_data(
             ChunkType::IEND if state == IdatState::NotSeen => return Err(Error::MissingImageData),
             ChunkType::IEND => return Ok(found),
             _ if options.preserve_metadata => {
-                read_ancillary(&chunk, position, options.strict_ancillary, &mut found.metadata)?;
+                read_ancillary(&chunk, position, options.strict_ancillary, decompressor, &mut found.metadata)?;
             }
             _ => {}
         }

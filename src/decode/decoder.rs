@@ -199,7 +199,7 @@ impl Decoder {
         let scanline_size = header.scanline_size()?;
 
         self.compressed.clear();
-        let found = collect_image_data(&mut chunks, &header, &self.options, &mut self.compressed)?;
+        let found = collect_image_data(&mut chunks, &header, &self.options, &mut self.decompressor, &mut self.compressed)?;
 
         // The decompressor appends, so clear what the previous image left here.
         self.scanlines.clear();

@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use rust_deflate::Decompressor;
+
 use super::collect_image_data;
 use crate::decode::chunk_reader::ChunkReader;
 use crate::decode::options::DecodeOptions;
@@ -41,7 +43,7 @@ fn collect_with(header: &ImageHeader, data: &[u8]) -> Result<(Vec<u8>, ImageChun
 fn collect_with_options(header: &ImageHeader, options: &DecodeOptions, data: &[u8]) -> Result<(Vec<u8>, ImageChunks), Error> {
     let mut chunks = ChunkReader::new(data).unwrap().validate_crc(false);
     let mut out = Vec::new();
-    let found = collect_image_data(&mut chunks, header, options, &mut out)?;
+    let found = collect_image_data(&mut chunks, header, options, &mut Decompressor::new(), &mut out)?;
     Ok((out, found))
 }
 
@@ -100,7 +102,7 @@ fn stops_after_iend() {
     let mut chunks = ChunkReader::new(&data).unwrap().validate_crc(false);
     let mut out = Vec::new();
 
-    collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut out).unwrap();
+    collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut Decompressor::new(), &mut out).unwrap();
 
     let next = chunks.next_chunk().unwrap().unwrap();
     assert_eq!(next.chunk_type().as_bytes(), b"tEXt");
@@ -112,7 +114,7 @@ fn appends_to_existing_contents() {
     let mut chunks = ChunkReader::new(&data).unwrap().validate_crc(false);
     let mut out = b"xy".to_vec();
 
-    collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut out).unwrap();
+    collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut Decompressor::new(), &mut out).unwrap();
 
     assert_eq!(out, b"xyabc");
 }
@@ -175,7 +177,7 @@ fn crc_errors_are_passed_on() {
     let mut out = Vec::new();
 
     assert!(matches!(
-        collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut out),
+        collect_image_data(&mut chunks, &rgb(), &DecodeOptions::default(), &mut Decompressor::new(), &mut out),
         Err(Error::CrcMismatch { .. })
     ));
 }

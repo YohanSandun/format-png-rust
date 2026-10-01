@@ -4,9 +4,13 @@
 //! To support a new chunk: add its type under `png::metadata`, a field and
 //! accessor on `Metadata`, and an arm in `read_known_chunk` with its placement rule.
 
+use rust_deflate::Decompressor;
+
 use crate::error::Error;
-use crate::png::metadata::{Chromaticities, Gamma, PhysicalDimensions, RenderingIntent, Time};
+use crate::png::metadata::{Chromaticities, Gamma, PhysicalDimensions, RenderingIntent, Text, Time};
 use crate::png::{Chunk, ChunkPosition, ChunkType, Metadata, OwnedChunk};
+
+const MAX_TEXT_BLOCK_SIZE: usize = 8_000_000;
 
 /// Appends a copy of `chunk`, found at `position`, to `chunks` if it's ancillary.
 /// Critical chunks (`IHDR`, `PLTE`, `IDAT`, `IEND`, and unknown critical ones)
@@ -27,9 +31,10 @@ pub(crate) fn read_ancillary(
     chunk: &Chunk<'_>,
     position: ChunkPosition,
     strict: bool,
+    decompressor: &mut Decompressor,
     metadata: &mut Metadata,
 ) -> Result<(), Error> {
-    match read_known_chunk(chunk, position, metadata) {
+    match read_known_chunk(chunk, position, decompressor, metadata) {
         Err(error) if strict => Err(error),
         _ => Ok(()),
     }
@@ -46,7 +51,12 @@ pub(crate) fn read_ancillary(
 /// - `Error::DuplicateChunk` if the field is already set: each of these chunks
 ///   may appear only once, and the first one is kept.
 /// - Any error from the chunk type's `parse`.
-fn read_known_chunk(chunk: &Chunk<'_>, position: ChunkPosition, metadata: &mut Metadata) -> Result<(), Error> {
+fn read_known_chunk(
+    chunk: &Chunk<'_>,
+    position: ChunkPosition,
+    decompressor: &mut Decompressor,
+    metadata: &mut Metadata,
+) -> Result<(), Error> {
     let chunk_type = chunk.chunk_type();
     check_position(chunk_type, position)?;
 
@@ -57,6 +67,9 @@ fn read_known_chunk(chunk: &Chunk<'_>, position: ChunkPosition, metadata: &mut M
         ChunkType::SRGB => store(&mut metadata.srgb, chunk_type, || RenderingIntent::parse(data)),
         ChunkType::PHYS => store(&mut metadata.physical_dimensions, chunk_type, || PhysicalDimensions::parse(data)),
         ChunkType::TIME => store(&mut metadata.time, chunk_type, || Time::parse(data)),
+        ChunkType::TEXT => Ok(metadata.text.push(Text::parse_text(data)?)),
+        ChunkType::ZTXT => Ok(metadata.text.push(Text::parse_compressed(data, decompressor, MAX_TEXT_BLOCK_SIZE)?)),
+        ChunkType::ITXT => Ok(metadata.text.push(Text::parse_international(data, decompressor, MAX_TEXT_BLOCK_SIZE)?)),
         _ => Ok(()),
     }
 }

@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use rust_deflate::Decompressor;
+
 use super::{check_position, preserve_chunk, read_ancillary, read_known_chunk};
 use crate::error::Error;
 use crate::png::metadata::{Gamma, PhysicalDimensions, RenderingIntent, Time, Unit};
@@ -99,7 +101,7 @@ fn time_and_unknown_chunks_may_come_anywhere() {
 
 fn read(chunk_type: &[u8; 4], data: &[u8], position: ChunkPosition) -> Result<Metadata, Error> {
     let mut metadata = Metadata::default();
-    read_known_chunk(&chunk(chunk_type, data), position, &mut metadata)?;
+    read_known_chunk(&chunk(chunk_type, data), position, &mut Decompressor::new(), &mut metadata)?;
     Ok(metadata)
 }
 
@@ -123,9 +125,21 @@ fn reads_each_known_chunk() {
 
 #[test]
 fn unknown_chunks_are_skipped() {
-    for (chunk_type, data) in [(b"tEXt", &b"Title\0x"[..]), (b"ruSt", b"private"), (b"zzZZ", b"")] {
+    for (chunk_type, data) in [(b"ruSt", &b"private"[..]), (b"zzZZ", b"")] {
         assert_eq!(read(chunk_type, data, BeforePalette), Ok(Metadata::default()));
     }
+}
+
+#[test]
+fn text_chunks_are_read_anywhere_and_repeatedly() {
+    let mut metadata = Metadata::default();
+    let mut decompressor = Decompressor::new();
+
+    read_known_chunk(&chunk(b"tEXt", b"Title\0first"), BeforePalette, &mut decompressor, &mut metadata).unwrap();
+    read_known_chunk(&chunk(b"tEXt", b"Title\0second"), AfterImageData, &mut decompressor, &mut metadata).unwrap();
+
+    let texts: Vec<_> = metadata.text().iter().map(|t| (t.keyword.as_str(), t.text.as_str())).collect();
+    assert_eq!(texts, [("Title", "first"), ("Title", "second")]);
 }
 
 #[test]
@@ -139,7 +153,7 @@ fn misplaced_chunk_fails_and_changes_nothing() {
     let mut metadata = Metadata::default();
 
     assert_eq!(
-        read_known_chunk(&chunk(b"gAMA", &GAMA), AfterImageData, &mut metadata),
+        read_known_chunk(&chunk(b"gAMA", &GAMA), AfterImageData, &mut Decompressor::new(), &mut metadata),
         Err(Error::MisplacedChunk(ChunkType::GAMA))
     );
     assert!(metadata.is_empty());
@@ -150,7 +164,7 @@ fn invalid_chunk_fails_and_changes_nothing() {
     let mut metadata = Metadata::default();
 
     assert_eq!(
-        read_known_chunk(&chunk(b"pHYs", &[0; 4]), BeforePalette, &mut metadata),
+        read_known_chunk(&chunk(b"pHYs", &[0; 4]), BeforePalette, &mut Decompressor::new(), &mut metadata),
         Err(Error::InvalidChunkLength { chunk_type: ChunkType::PHYS, length: 4 })
     );
     assert!(metadata.is_empty());
@@ -159,11 +173,11 @@ fn invalid_chunk_fails_and_changes_nothing() {
 #[test]
 fn second_chunk_of_a_type_fails_and_keeps_the_first() {
     let mut metadata = Metadata::default();
-    read_known_chunk(&chunk(b"tIME", &TIME), BeforePalette, &mut metadata).unwrap();
+    read_known_chunk(&chunk(b"tIME", &TIME), BeforePalette, &mut Decompressor::new(), &mut metadata).unwrap();
 
     let later = [0x07, 0xEB, 1, 1, 0, 0, 0];
     assert_eq!(
-        read_known_chunk(&chunk(b"tIME", &later), AfterImageData, &mut metadata),
+        read_known_chunk(&chunk(b"tIME", &later), AfterImageData, &mut Decompressor::new(), &mut metadata),
         Err(Error::DuplicateChunk(ChunkType::TIME))
     );
     assert_eq!(metadata.time().map(|t| t.year), Some(2026));
@@ -173,10 +187,10 @@ fn second_chunk_of_a_type_fails_and_keeps_the_first() {
 fn duplicate_is_reported_even_if_the_second_is_invalid() {
     // Either error is reasonable; this pins the order: position, then duplicate, then parse.
     let mut metadata = Metadata::default();
-    read_known_chunk(&chunk(b"gAMA", &GAMA), BeforePalette, &mut metadata).unwrap();
+    read_known_chunk(&chunk(b"gAMA", &GAMA), BeforePalette, &mut Decompressor::new(), &mut metadata).unwrap();
 
     assert_eq!(
-        read_known_chunk(&chunk(b"gAMA", &[0; 4]), BeforePalette, &mut metadata),
+        read_known_chunk(&chunk(b"gAMA", &[0; 4]), BeforePalette, &mut Decompressor::new(), &mut metadata),
         Err(Error::DuplicateChunk(ChunkType::GAMA))
     );
 }
@@ -185,9 +199,9 @@ fn duplicate_is_reported_even_if_the_second_is_invalid() {
 fn different_chunks_fill_different_fields() {
     let mut metadata = Metadata::default();
 
-    read_known_chunk(&chunk(b"gAMA", &GAMA), BeforePalette, &mut metadata).unwrap();
-    read_known_chunk(&chunk(b"sRGB", &[1]), BeforePalette, &mut metadata).unwrap();
-    read_known_chunk(&chunk(b"pHYs", &PHYS), BeforeImageData, &mut metadata).unwrap();
+    read_known_chunk(&chunk(b"gAMA", &GAMA), BeforePalette, &mut Decompressor::new(), &mut metadata).unwrap();
+    read_known_chunk(&chunk(b"sRGB", &[1]), BeforePalette, &mut Decompressor::new(), &mut metadata).unwrap();
+    read_known_chunk(&chunk(b"pHYs", &PHYS), BeforeImageData, &mut Decompressor::new(), &mut metadata).unwrap();
 
     assert!(metadata.gamma().is_some());
     assert_eq!(metadata.srgb(), Some(RenderingIntent::RelativeColorimetric));
@@ -207,7 +221,7 @@ fn lenient_skips_bad_chunks() {
         (b"gAMA", &[0; 4][..], BeforePalette), // invalid value
         (b"tIME", &[1][..], BeforePalette),    // invalid length
     ] {
-        assert_eq!(read_ancillary(&chunk(chunk_type, data), position, false, &mut metadata), Ok(()));
+        assert_eq!(read_ancillary(&chunk(chunk_type, data), position, false, &mut Decompressor::new(), &mut metadata), Ok(()));
     }
     assert!(metadata.is_empty());
 }
@@ -216,7 +230,7 @@ fn lenient_skips_bad_chunks() {
 fn lenient_still_reads_good_chunks() {
     let mut metadata = Metadata::default();
 
-    read_ancillary(&chunk(b"gAMA", &GAMA), BeforePalette, false, &mut metadata).unwrap();
+    read_ancillary(&chunk(b"gAMA", &GAMA), BeforePalette, false, &mut Decompressor::new(), &mut metadata).unwrap();
 
     assert!(metadata.gamma().is_some());
 }
@@ -226,11 +240,11 @@ fn strict_returns_the_error() {
     let mut metadata = Metadata::default();
 
     assert_eq!(
-        read_ancillary(&chunk(b"gAMA", &GAMA), AfterImageData, true, &mut metadata),
+        read_ancillary(&chunk(b"gAMA", &GAMA), AfterImageData, true, &mut Decompressor::new(), &mut metadata),
         Err(Error::MisplacedChunk(ChunkType::GAMA))
     );
     assert_eq!(
-        read_ancillary(&chunk(b"gAMA", &[0; 4]), BeforePalette, true, &mut metadata),
+        read_ancillary(&chunk(b"gAMA", &[0; 4]), BeforePalette, true, &mut Decompressor::new(), &mut metadata),
         Err(Error::InvalidChunkData(ChunkType::GAMA))
     );
 }
