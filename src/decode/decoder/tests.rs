@@ -797,3 +797,115 @@ fn strict_ancillary_fails_the_decode() {
     assert!(Decoder::with_options(keep_everything()).decode(&data).is_ok());
     assert_eq!(Decoder::with_options(strict).decode(&data), Err(Error::InvalidChunkData(ChunkType::GAMA)));
 }
+
+// ---------- read_chunks ----------
+
+/// IHDR, known ancillary chunks, a custom critical chunk, the image data, a
+/// private chunk after it, IEND, and a chunk after IEND.
+fn png_with_every_kind_of_chunk(image_data: &[u8]) -> Vec<u8> {
+    png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"gAMA", &45455u32.to_be_bytes()),
+        chunk(b"tEXt", b"Title\0format-png"),
+        chunk(b"CuSt", b"custom critical"),
+        chunk(b"IDAT", image_data),
+        chunk(b"ruSt", b"private"),
+        chunk(b"IEND", b""),
+        chunk(b"tEXt", b"After\0IEND"),
+    ])
+}
+
+#[test]
+fn read_chunks_keeps_every_chunk_in_file_order() {
+    let data = png_with_every_kind_of_chunk(&rust_deflate::compress_zlib(&[0, 1, 2, 3, 4]));
+
+    let png = Decoder::new().read_chunks(&data).unwrap();
+
+    let types: Vec<_> = png.chunks().iter().map(|c| c.chunk_type().to_string()).collect();
+    assert_eq!(types, ["IHDR", "gAMA", "tEXt", "CuSt", "IDAT", "ruSt", "IEND"]);
+    assert_eq!(png.chunks()[3].data(), b"custom critical");
+}
+
+#[test]
+fn read_chunks_parses_known_chunks() {
+    let data = png_with_every_kind_of_chunk(&rust_deflate::compress_zlib(&[0, 1, 2, 3, 4]));
+
+    let png = Decoder::new().read_chunks(&data).unwrap();
+
+    assert_eq!(*png.header(), rgba_1x1_header());
+    assert_eq!(png.metadata().gamma().map(|g| g.scaled()), Some(45455));
+    let text = &png.metadata().text()[0];
+    assert_eq!((text.keyword.as_str(), text.text.as_str()), ("Title", "format-png"));
+}
+
+#[test]
+fn read_chunks_lists_unknown_chunks_critical_or_not() {
+    let data = png_with_every_kind_of_chunk(&rust_deflate::compress_zlib(&[0, 1, 2, 3, 4]));
+
+    let png = Decoder::new().read_chunks(&data).unwrap();
+
+    let unknown: Vec<_> = png.unknown_chunks().map(|c| (c.chunk_type().to_string(), c.data())).collect();
+    assert_eq!(unknown, [("CuSt".to_string(), &b"custom critical"[..]), ("ruSt".to_string(), &b"private"[..])]);
+}
+
+#[test]
+fn read_chunks_does_not_decompress_image_data() {
+    let data = png_with_every_kind_of_chunk(b"not zlib");
+
+    assert!(Decoder::new().read_chunks(&data).is_ok());
+    assert!(matches!(Decoder::new().decode(&data), Err(Error::Decompression(_))));
+}
+
+#[test]
+fn read_chunks_checks_chunk_order() {
+    let idat = chunk(b"IDAT", b"x");
+    let header = ihdr(1, 1, 8, ColorType::Rgba, Interlace::None);
+
+    let no_idat = png_of(&[header.clone(), chunk(b"IEND", b"")]);
+    assert_eq!(Decoder::new().read_chunks(&no_idat), Err(Error::MissingImageData));
+
+    let split = png_of(&[header.clone(), idat.clone(), chunk(b"ruSt", b""), idat.clone(), chunk(b"IEND", b"")]);
+    assert_eq!(Decoder::new().read_chunks(&split), Err(Error::NonConsecutiveImageData));
+
+    let no_iend = png_of(&[header, idat]);
+    assert_eq!(Decoder::new().read_chunks(&no_iend), Err(Error::MissingImageEnd));
+}
+
+#[test]
+fn read_chunks_parses_metadata_whatever_preserve_metadata_says() {
+    let data = png_with_every_kind_of_chunk(b"x");
+    let options = DecodeOptions { preserve_metadata: false, ..DecodeOptions::default() };
+
+    let png = Decoder::with_options(options).read_chunks(&data).unwrap();
+
+    assert!(png.metadata().gamma().is_some());
+}
+
+#[test]
+fn read_chunks_skips_invalid_metadata_unless_strict() {
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"gAMA", &[0; 3]),
+        chunk(b"IDAT", b"x"),
+        chunk(b"IEND", b""),
+    ]);
+
+    let png = Decoder::new().read_chunks(&data).unwrap();
+    assert_eq!(png.metadata().gamma(), None);
+    assert_eq!(png.chunks_of_type(ChunkType::GAMA).count(), 1);
+
+    let strict = DecodeOptions { strict_ancillary: true, ..DecodeOptions::default() };
+    assert_eq!(
+        Decoder::with_options(strict).read_chunks(&data),
+        Err(Error::InvalidChunkLength { chunk_type: ChunkType::GAMA, length: 3 })
+    );
+}
+
+#[test]
+fn read_chunks_respects_validate_crc() {
+    // Corrupts IEND's CRC: the last chunk read.
+    let data = with_corrupted_crc(&png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[0, 1, 2, 3, 4]));
+
+    assert!(matches!(Decoder::new().read_chunks(&data), Err(Error::CrcMismatch { .. })));
+    assert!(Decoder::with_options(lenient_options()).read_chunks(&data).is_ok());
+}

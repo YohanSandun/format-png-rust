@@ -30,6 +30,10 @@
 //!   conversion: 16-bit samples, packed pixels under 8 bits, and palette indices
 //!   with their [`Palette`].
 //! - [`read_header`] reads only the image header.
+//! - [`read_chunks`] reads and parses every chunk without decompressing the
+//!   image data, which is much faster than decoding. It returns a [`PngChunks`]
+//!   with the header, palette, metadata and text, and every chunk raw, including
+//!   private, custom and unknown ones.
 //! - A [`ChunkReader`] returns every chunk raw, including ancillary, private and
 //!   unknown ones. Chunk types are in the [`png`] module.
 //! - [`DecodeOptions::preserve_metadata`] parses known ancillary chunks into
@@ -47,9 +51,10 @@
 //!
 //! # Not supported yet
 //!
-//! Text, `iCCP` and most other ancillary chunks aren't parsed yet; see
+//! `iCCP` and most other ancillary chunks aren't parsed yet; see
 //! [`png::metadata`] for the ones that are. The others can be kept raw with
-//! [`DecodeOptions::preserve_chunks`], and a [`ChunkReader`] returns them all.
+//! [`DecodeOptions::preserve_chunks`], and [`read_chunks`] and a [`ChunkReader`]
+//! return them all.
 
 pub mod png;
 mod convert;
@@ -61,7 +66,7 @@ pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use error::Error;
 pub use png::{
     Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha,
-    PixelFormat, Transparency,
+    PixelFormat, PngChunks, Transparency,
 };
 
 /// Decodes a PNG to 8-bit RGBA, ready for a browser canvas's `ImageData`.
@@ -103,6 +108,19 @@ pub fn decode_rgb8(data: &[u8]) -> Result<Bitmap, Error> {
 /// Same as [`Decoder::decode_into`].
 pub fn decode(data: &[u8]) -> Result<Image, Error> {
     Decoder::new().decode(data)
+}
+
+/// Reads and parses every chunk of a PNG with default options, without
+/// decompressing the image data; see [`PngChunks`].
+///
+/// This is the simple API. To read many images, reuse a [`Decoder`] and call
+/// [`Decoder::read_chunks`] instead.
+///
+/// # Errors
+///
+/// Same as [`Decoder::read_chunks`].
+pub fn read_chunks(data: &[u8]) -> Result<PngChunks<'_>, Error> {
+    Decoder::new().read_chunks(data)
 }
 
 /// Reads the `IHDR` chunk of a PNG with default options.

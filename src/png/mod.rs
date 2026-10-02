@@ -9,6 +9,7 @@ mod header;
 mod image;
 pub mod metadata;
 mod owned_chunk;
+mod png_chunks;
 pub(crate) mod palette;
 mod transparency;
 
@@ -20,6 +21,7 @@ pub(crate) use image::ImageChunks;
 pub use image::Image;
 pub use metadata::Metadata;
 pub use owned_chunk::{ChunkPosition, OwnedChunk};
+pub use png_chunks::PngChunks;
 pub use palette::Palette;
 pub use transparency::{PaletteAlpha, Transparency};
 

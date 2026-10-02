@@ -20,7 +20,10 @@ chunk of the file.
 - Reusable `Decoder` that keeps its decompressor and buffers between images
 - Raw access to every chunk, including private and unknown ones, while reading
   or kept with the decoded image
-- Metadata: `gAMA`, `cHRM`, `sRGB`, `pHYs` and `tIME`, parsed into typed values
+- Metadata: `gAMA`, `cHRM`, `sRGB`, `pHYs`, `tIME` and text (`tEXt`, `zTXt`,
+  `iTXt`), parsed into typed values
+- Every chunk read and parsed without decompressing the image data, including
+  private, custom and unknown ones
 - Decompressed size capped at exactly what the header allows, so a small
   malicious file can't expand without limit
 
@@ -118,6 +121,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Read every chunk without decoding
+
+`read_chunks` reads and parses every chunk but never decompresses the image
+data, so it's much faster than decoding. Known chunks come back parsed; every
+chunk, including private, custom and unknown ones, critical or not, is also
+there raw, in file order.
+
+```rust,no_run
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read("image.png")?;
+    let png = format_png::read_chunks(&data)?;
+
+    println!("{}x{}", png.header().width, png.header().height);
+    for text in png.metadata().text() {
+        println!("{}: {}", text.keyword, text.text);
+    }
+    for chunk in png.unknown_chunks() {
+        println!("{}: {} bytes", chunk.chunk_type(), chunk.data().len());
+    }
+    Ok(())
+}
+```
+
 ### Read the chunks yourself
 
 A `ChunkReader` returns every chunk as it appears in the file, without copying
@@ -199,9 +225,9 @@ data, and so on. Malformed input returns an error; it doesn't panic. `Error` is
 
 ## Not supported yet
 
-- **Parsing text (`tEXt`, `zTXt`, `iTXt`), `iCCP`, `bKGD`, `sBIT`, `eXIf` and other
-  ancillary chunks.** They're kept as raw chunks with `preserve_chunks`, and
-  available through `ChunkReader`.
+- **Parsing `iCCP`, `bKGD`, `sBIT`, `eXIf` and other ancillary chunks.** They're
+  kept as raw chunks with `preserve_chunks`, and available through
+  `read_chunks` and `ChunkReader`.
 - **Color management:** gamma, chromaticities and ICC profiles are read but
   not applied.
 - **Encoding.**

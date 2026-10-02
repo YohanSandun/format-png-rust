@@ -257,3 +257,30 @@ fn every_valid_fixture_decodes_with_everything_kept() {
         assert_eq!(image.data(), expected_pixels(image.header()), "{}", path.display());
     }
 }
+
+#[test]
+fn every_valid_fixture_reads_chunks_like_it_decodes() {
+    let options = DecodeOptions { strict_ancillary: true, ..keep_everything() };
+
+    for path in fixtures("valid") {
+        let data = fs::read(&path).unwrap();
+        let png = Decoder::with_options(options.clone()).read_chunks(&data).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let image = Decoder::with_options(options.clone()).decode(&data).unwrap();
+
+        assert_eq!(png.header(), image.header(), "{}", path.display());
+        assert_eq!(png.palette(), image.palette(), "{}", path.display());
+        assert_eq!(png.transparency(), image.transparency(), "{}", path.display());
+        assert_eq!(png.metadata(), image.metadata(), "{}", path.display());
+    }
+}
+
+#[test]
+fn ancillary_fixture_reads_text_and_unknown_chunks() {
+    let data = read("valid", "ancillary_chunks.png");
+    let png = format_png::read_chunks(&data).unwrap();
+
+    let text: Vec<_> = png.metadata().text().iter().map(|t| (t.keyword.as_str(), t.text.as_str())).collect();
+    assert_eq!(text, [("Title", "format-png test image"), ("Comment", "compressed text")]);
+    let unknown: Vec<_> = png.unknown_chunks().map(|c| c.chunk_type().to_string()).collect();
+    assert_eq!(unknown, ["ruSt"]);
+}

@@ -1,14 +1,14 @@
 use super::chunk_reader::ChunkReader;
 use super::options::DecodeOptions;
 use crate::decode::deinterlace::deinterlace_pass;
-use crate::decode::image_data::collect_image_data;
+use crate::decode::image_data::{collect_image_data, read_image_chunks};
 use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
 use crate::convert::{Source, convert, is_unchanged};
 use crate::png::{
-    Bitmap, ChunkType, Image, ImageChunks, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PixelFormat,
-    Transparency,
+    Bitmap, Chunk, ChunkType, Image, ImageChunks, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PixelFormat,
+    PngChunks, Transparency,
 };
 use rust_deflate::{Decompressor, OutputOptions};
 
@@ -138,12 +138,58 @@ impl Decoder {
     }
 
     fn read_image_header(chunks: &mut ChunkReader<'_>) -> Result<ImageHeader, Error> {
+        Self::read_image_header_chunk(chunks).map(|(header, _)| header)
+    }
+
+    /// Like `read_image_header`, but also returns the raw `IHDR` chunk.
+    fn read_image_header_chunk<'a>(chunks: &mut ChunkReader<'a>) -> Result<(ImageHeader, Chunk<'a>), Error> {
         match chunks.next_chunk()? {
             Some(chunk) if chunk.chunk_type() == ChunkType::IHDR => {
-                ImageHeader::parse(chunk.data())
+                Ok((ImageHeader::parse(chunk.data())?, chunk))
             }
             _ => Err(Error::MissingImageHeader),
         }
+    }
+
+    /// Reads and parses every chunk without decoding the image; see [`PngChunks`].
+    ///
+    /// This is much faster than [`decode`](Self::decode): the `IDAT` stream is
+    /// only checked for its CRC and position, never decompressed, so errors in
+    /// the compressed data itself aren't found. Known ancillary chunks are always
+    /// parsed into [`PngChunks::metadata`], whatever
+    /// [`DecodeOptions::preserve_metadata`] says; [`DecodeOptions::validate_crc`]
+    /// and [`DecodeOptions::strict_ancillary`] apply as when decoding. The
+    /// decoder's [`palette`](Self::palette) and other accessors for the last
+    /// image decoded aren't changed.
+    ///
+    /// ```
+    /// use format_png::Decoder;
+    /// use format_png::png::ChunkType;
+    ///
+    /// let data = std::fs::read("tests/data/valid/idat_split.png")?;
+    /// let png = Decoder::new().read_chunks(&data)?;
+    ///
+    /// assert_eq!(png.chunks().first().map(|c| c.chunk_type()), Some(ChunkType::IHDR));
+    /// assert_eq!(png.chunks().last().map(|c| c.chunk_type()), Some(ChunkType::IEND));
+    /// assert!(png.chunks_of_type(ChunkType::IDAT).count() > 1);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The same chunk errors as [`decode_into`](Self::decode_into): everything
+    /// except [`Error::Decompression`], [`Error::ImageDataTooShort`],
+    /// [`Error::ImageDataTooLong`], [`Error::InvalidFilterType`] and
+    /// [`Error::ImageTooLarge`], which need the image data decompressed.
+    pub fn read_chunks<'a>(&mut self, data: &'a [u8]) -> Result<PngChunks<'a>, Error> {
+        let mut chunks = self.chunks(data)?;
+        let (header, header_chunk) = Self::read_image_header_chunk(&mut chunks)?;
+
+        let options = DecodeOptions { preserve_metadata: true, preserve_chunks: false, ..self.options.clone() };
+        let mut all = vec![header_chunk];
+        let found = read_image_chunks(&mut chunks, &header, &options, &mut self.decompressor, |chunk| all.push(chunk))?;
+
+        Ok(PngChunks::new(header, all, found))
     }
 
     /// Decodes the whole image into the PNG's own pixel format; see [`Image`].

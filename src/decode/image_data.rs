@@ -5,7 +5,7 @@ use super::chunk_reader::ChunkReader;
 use super::metadata::{preserve_chunk, read_ancillary};
 use super::options::DecodeOptions;
 use crate::error::Error;
-use crate::png::{ChunkPosition, ChunkType, ImageChunks, ImageHeader, Palette, Transparency};
+use crate::png::{Chunk, ChunkPosition, ChunkType, ImageChunks, ImageHeader, Palette, Transparency};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum IdatState {
@@ -35,10 +35,30 @@ pub(crate) fn collect_image_data(
     decompressor: &mut Decompressor,
     out: &mut Vec<u8>,
 ) -> Result<ImageChunks, Error> {
+    read_image_chunks(chunks, header, options, decompressor, |chunk| {
+        if chunk.chunk_type() == ChunkType::IDAT {
+            out.extend_from_slice(chunk.data());
+        }
+    })
+}
+
+/// Reads the chunks after `IHDR` up to and including `IEND` like
+/// `collect_image_data`, with the same checks and errors, but passes every chunk
+/// to `on_chunk`, in file order, instead of collecting the image data. A chunk
+/// is passed before it's checked, so after an error `on_chunk` may have seen the
+/// chunk that failed.
+pub(crate) fn read_image_chunks<'a>(
+    chunks: &mut ChunkReader<'a>,
+    header: &ImageHeader,
+    options: &DecodeOptions,
+    decompressor: &mut Decompressor,
+    mut on_chunk: impl FnMut(Chunk<'a>),
+) -> Result<ImageChunks, Error> {
     let mut state = IdatState::NotSeen;
     let mut found = ImageChunks::default();
 
     while let Some(chunk) = chunks.next_chunk()? {
+        on_chunk(chunk);
         let chunk_type = chunk.chunk_type();
 
         // Any other chunk ends a run of IDATs. Updating the state first means the
@@ -69,7 +89,6 @@ pub(crate) fn collect_image_data(
                     IdatState::NotSeen => require_palette(header, found.palette.as_ref())?,
                     IdatState::InRun => {}
                 }
-                out.extend_from_slice(chunk.data());
                 state = IdatState::InRun;
             }
             ChunkType::IEND if state == IdatState::NotSeen => return Err(Error::MissingImageData),
