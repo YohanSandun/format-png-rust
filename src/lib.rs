@@ -51,7 +51,7 @@
 //!
 //! # Not supported yet
 //!
-//! `iCCP` and most other ancillary chunks aren't parsed yet; see
+//! `bKGD`, `sBIT` and some other ancillary chunks aren't parsed yet; see
 //! [`png::metadata`] for the ones that are. The others can be kept raw with
 //! [`DecodeOptions::preserve_chunks`], and [`read_chunks`] and a [`ChunkReader`]
 //! return them all.

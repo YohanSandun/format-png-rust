@@ -20,12 +20,18 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod cicp;
 mod color;
+mod exif;
+mod icc;
 mod physical;
 mod text;
 mod time;
 
+pub use cicp::CodingIndependentCodePoints;
 pub use color::{Chromaticities, Gamma, RenderingIntent};
+pub use exif::{Exif, ExifByteOrder};
+pub use icc::IccProfile;
 pub use physical::{PhysicalDimensions, Unit};
 pub use text::{Text, TextKind};
 pub use time::Time;
@@ -44,6 +50,9 @@ pub struct Metadata {
     pub(crate) physical_dimensions: Option<PhysicalDimensions>,
     pub(crate) time: Option<Time>,
     pub(crate) text: Vec<Text>,
+    pub(crate) icc_profile: Option<IccProfile>,
+    pub(crate) cicp: Option<CodingIndependentCodePoints>,
+    pub(crate) exif: Option<Exif>,
 }
 
 impl Metadata {
@@ -76,6 +85,22 @@ impl Metadata {
     /// more than once.
     pub fn text(&self) -> &[Text] {
         &self.text
+    }
+
+    /// The `iCCP` chunk: the image's embedded ICC color profile.
+    pub fn icc_profile(&self) -> Option<&IccProfile> {
+        self.icc_profile.as_ref()
+    }
+
+    /// The `cICP` chunk: the image's color space as coding-independent code
+    /// points. Takes precedence over every other color chunk.
+    pub fn cicp(&self) -> Option<CodingIndependentCodePoints> {
+        self.cicp
+    }
+
+    /// The `eXIf` chunk: the image's Exif metadata, raw.
+    pub fn exif(&self) -> Option<&Exif> {
+        self.exif.as_ref()
     }
 
     /// Whether no known chunk was found.

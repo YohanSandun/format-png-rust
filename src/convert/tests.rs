@@ -329,7 +329,7 @@ fn convert_packs_rows_without_padding() {
     assert_eq!(&out[..4], &[255, 255, 255, 255]); // (0, 0)
     assert_eq!(&out[4..8], &[0, 0, 0, 255]); // (1, 0)
     assert_eq!(&out[36..40], &[255, 255, 255, 255]); // (9, 0)
-    assert!(out[40..].chunks_exact(4).all(|px| px == [0, 0, 0, 255])); // row 1
+    assert!(out[40..].as_chunks::<4>().0.iter().all(|px| *px == [0, 0, 0, 255])); // row 1
 }
 
 #[test]

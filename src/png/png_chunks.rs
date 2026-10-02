@@ -1,7 +1,7 @@
 use crate::png::{Chunk, ChunkType, ImageChunks, ImageHeader, Metadata, Palette, Transparency};
 
 /// The chunk types this crate parses. Every other chunk is unknown to it.
-const KNOWN: [ChunkType; 13] = [
+const KNOWN: [ChunkType; 16] = [
     ChunkType::IHDR,
     ChunkType::PLTE,
     ChunkType::IDAT,
@@ -15,6 +15,9 @@ const KNOWN: [ChunkType; 13] = [
     ChunkType::TEXT,
     ChunkType::ZTXT,
     ChunkType::ITXT,
+    ChunkType::ICCP,
+    ChunkType::CICP,
+    ChunkType::EXIF,
 ];
 
 /// Every chunk of a PNG, read and parsed, without decompressing the image data.
@@ -98,7 +101,7 @@ impl<'a> PngChunks<'a> {
     }
 
     /// The chunks this crate doesn't parse, in file order: private and custom
-    /// chunks, critical or not, and public ones not supported yet, such as `iCCP`.
+    /// chunks, critical or not, and public ones not supported yet, such as `bKGD`.
     /// Read them with [`Chunk::data`].
     pub fn unknown_chunks(&self) -> impl Iterator<Item = Chunk<'a>> + '_ {
         self.chunks.iter().copied().filter(|chunk| !KNOWN.contains(&chunk.chunk_type()))

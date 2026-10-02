@@ -101,9 +101,12 @@ fn decoder_reused_across_all_fixtures_matches_fresh_decodes() {
     }
 }
 
+/// Whether an error is the one a fixture should fail with.
+type ErrorCheck = fn(&Error) -> bool;
+
 #[test]
 fn invalid_image_data_fixtures_fail_with_the_right_error() {
-    let cases: [(&str, fn(&Error) -> bool); 7] = [
+    let cases: [(&str, ErrorCheck); 7] = [
         ("filter_type_5.png", |e| *e == Error::InvalidFilterType(5)),
         ("zlib_corrupt.png", |e| matches!(e, Error::Decompression(_))),
         ("idat_missing.png", |e| *e == Error::MissingImageData),

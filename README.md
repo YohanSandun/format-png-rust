@@ -20,8 +20,8 @@ chunk of the file.
 - Reusable `Decoder` that keeps its decompressor and buffers between images
 - Raw access to every chunk, including private and unknown ones, while reading
   or kept with the decoded image
-- Metadata: `gAMA`, `cHRM`, `sRGB`, `pHYs`, `tIME` and text (`tEXt`, `zTXt`,
-  `iTXt`), parsed into typed values
+- Metadata: `gAMA`, `cHRM`, `sRGB`, `iCCP`, `cICP`, `pHYs`, `tIME`, `eXIf` and
+  text (`tEXt`, `zTXt`, `iTXt`), parsed into typed values
 - Every chunk read and parsed without decompressing the image data, including
   private, custom and unknown ones
 - Decompressed size capped at exactly what the header allows, so a small
@@ -225,7 +225,7 @@ data, and so on. Malformed input returns an error; it doesn't panic. `Error` is
 
 ## Not supported yet
 
-- **Parsing `iCCP`, `bKGD`, `sBIT`, `eXIf` and other ancillary chunks.** They're
+- **Parsing `bKGD`, `sBIT`, `hIST`, `sPLT` and other ancillary chunks.** They're
   kept as raw chunks with `preserve_chunks`, and available through
   `read_chunks` and `ChunkReader`.
 - **Color management:** gamma, chromaticities and ICC profiles are read but

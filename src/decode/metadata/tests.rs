@@ -248,3 +248,53 @@ fn strict_returns_the_error() {
         Err(Error::InvalidChunkData(ChunkType::GAMA))
     );
 }
+
+// ---------- iCCP, cICP and eXIf ----------
+
+const CICP: [u8; 4] = [9, 16, 0, 1]; // BT.2100 PQ, full range
+const EXIF: [u8; 8] = [b'M', b'M', 0, 42, 0, 0, 0, 8];
+
+fn iccp() -> Vec<u8> {
+    let mut data = b"ICC Profile\0\0".to_vec();
+    data.extend_from_slice(&rust_deflate::compress_zlib(b"profile"));
+    data
+}
+
+#[test]
+fn reads_iccp_cicp_and_exif() {
+    assert_eq!(read(b"iCCP", &iccp(), BeforePalette).unwrap().icc_profile().map(|p| p.profile.as_slice()), Some(&b"profile"[..]));
+    assert_eq!(read(b"cICP", &CICP, BeforePalette).unwrap().cicp().map(|c| c.transfer_function), Some(16));
+    assert_eq!(read(b"eXIf", &EXIF, BeforeImageData).unwrap().exif().map(|e| e.data()), Some(&EXIF[..]));
+}
+
+#[test]
+fn iccp_and_cicp_must_come_before_the_palette() {
+    for position in [BeforeImageData, AfterImageData] {
+        assert_eq!(read(b"iCCP", &iccp(), position), Err(Error::MisplacedChunk(ChunkType::ICCP)), "{position:?}");
+        assert_eq!(read(b"cICP", &CICP, position), Err(Error::MisplacedChunk(ChunkType::CICP)), "{position:?}");
+    }
+}
+
+#[test]
+fn exif_must_come_before_the_image_data() {
+    assert!(read(b"eXIf", &EXIF, BeforePalette).is_ok());
+    assert!(read(b"eXIf", &EXIF, BeforeImageData).is_ok());
+    assert_eq!(read(b"eXIf", &EXIF, AfterImageData), Err(Error::MisplacedChunk(ChunkType::EXIF)));
+}
+
+#[test]
+fn iccp_cicp_and_exif_may_appear_only_once() {
+    let iccp = iccp();
+    for (chunk_type, data) in [(b"iCCP", &iccp[..]), (b"cICP", &CICP), (b"eXIf", &EXIF)] {
+        let mut metadata = Metadata::default();
+        let mut decompressor = Decompressor::new();
+        read_known_chunk(&chunk(chunk_type, data), BeforePalette, &mut decompressor, &mut metadata).unwrap();
+        let first = metadata.clone();
+
+        assert_eq!(
+            read_known_chunk(&chunk(chunk_type, data), BeforePalette, &mut decompressor, &mut metadata),
+            Err(Error::DuplicateChunk(ChunkType::from_bytes(*chunk_type).unwrap()))
+        );
+        assert_eq!(metadata, first);
+    }
+}

@@ -236,7 +236,7 @@ fn split_at_null(data: &[u8], chunk_type: ChunkType) -> Result<(&[u8], &[u8]), E
 /// A valid keyword is 1 to `MAX_KEYWORD_LENGTH` bytes of printable Latin-1
 /// (32-126 and 161-255), with no leading, trailing or consecutive spaces.
 /// Returns `Error::InvalidChunkData` for `chunk_type` otherwise.
-fn read_keyword(data: &[u8], chunk_type: ChunkType) -> Result<(String, &[u8]), Error> {
+pub(super) fn read_keyword(data: &[u8], chunk_type: ChunkType) -> Result<(String, &[u8]), Error> {
     let (keyword, rest) = split_at_null(data, chunk_type)?;
     // Checked on the bytes: Latin-1 above 127 takes 2 bytes once in a `String`.
     if keyword.is_empty() || keyword.len() > MAX_KEYWORD_LENGTH {
@@ -276,7 +276,7 @@ fn utf8_to_string(bytes: &[u8], chunk_type: ChunkType) -> Result<String, Error> 
 ///
 /// Returns `Error::TextTooLong` if it decompresses to more than `max_size` bytes,
 /// and `Error::InvalidChunkData` for `chunk_type` if the stream is corrupt.
-fn decompress(
+pub(super) fn decompress(
     data: &[u8],
     chunk_type: ChunkType,
     decompressor: &mut Decompressor,

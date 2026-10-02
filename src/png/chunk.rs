@@ -44,6 +44,12 @@ impl ChunkType {
     pub const ZTXT: ChunkType = ChunkType(*b"zTXt");
     /// International (UTF-8) text, compressed or not.
     pub const ITXT: ChunkType = ChunkType(*b"iTXt");
+    /// Embedded ICC color profile.
+    pub const ICCP: ChunkType = ChunkType(*b"iCCP");
+    /// Coding-independent code points: the color space, as video formats give it.
+    pub const CICP: ChunkType = ChunkType(*b"cICP");
+    /// Exif metadata.
+    pub const EXIF: ChunkType = ChunkType(*b"eXIf");
 
     /// Creates a chunk type, checking every byte is an ASCII letter.
     ///

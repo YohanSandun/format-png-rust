@@ -23,6 +23,8 @@ fn unknown_chunks_leaves_out_every_chunk_this_crate_parses() {
         chunk(b"cHRM", b""),
         chunk(b"gAMA", b""),
         chunk(b"iCCP", b""),
+        chunk(b"cICP", b""),
+        chunk(b"bKGD", b""),
         chunk(b"sRGB", b""),
         chunk(b"PLTE", b""),
         chunk(b"tRNS", b""),
@@ -33,11 +35,12 @@ fn unknown_chunks_leaves_out_every_chunk_this_crate_parses() {
         chunk(b"zTXt", b""),
         chunk(b"iTXt", b""),
         chunk(b"tIME", b""),
+        chunk(b"eXIf", b""),
         chunk(b"ruSt", b""),
         chunk(b"IEND", b""),
     ]);
 
-    assert_eq!(types(png.unknown_chunks()), ["iCCP", "CuSt", "ruSt"]);
+    assert_eq!(types(png.unknown_chunks()), ["bKGD", "CuSt", "ruSt"]);
 }
 
 #[test]

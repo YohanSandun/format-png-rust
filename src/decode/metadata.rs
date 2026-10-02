@@ -7,7 +7,7 @@
 use rust_deflate::Decompressor;
 
 use crate::error::Error;
-use crate::png::metadata::{Chromaticities, Gamma, PhysicalDimensions, RenderingIntent, Text, Time};
+use crate::png::metadata::{Chromaticities, CodingIndependentCodePoints, Exif, Gamma, IccProfile, PhysicalDimensions, RenderingIntent, Text, Time};
 use crate::png::{Chunk, ChunkPosition, ChunkType, Metadata, OwnedChunk};
 
 /// Appends a copy of `chunk`, found at `position`, to `chunks` if it's ancillary.
@@ -65,9 +65,12 @@ fn read_known_chunk(
         ChunkType::SRGB => store(&mut metadata.srgb, chunk_type, || RenderingIntent::parse(data)),
         ChunkType::PHYS => store(&mut metadata.physical_dimensions, chunk_type, || PhysicalDimensions::parse(data)),
         ChunkType::TIME => store(&mut metadata.time, chunk_type, || Time::parse(data)),
-        ChunkType::TEXT => Ok(metadata.text.push(Text::parse_text(data)?)),
-        ChunkType::ZTXT => Ok(metadata.text.push(Text::parse_compressed_with(data, decompressor, Text::DEFAULT_MAX_SIZE)?)),
-        ChunkType::ITXT => Ok(metadata.text.push(Text::parse_international_with(data, decompressor, Text::DEFAULT_MAX_SIZE)?)),
+        ChunkType::TEXT => push(&mut metadata.text, Text::parse_text(data)),
+        ChunkType::ZTXT => push(&mut metadata.text, Text::parse_compressed_with(data, decompressor, Text::DEFAULT_MAX_SIZE)),
+        ChunkType::ITXT => push(&mut metadata.text, Text::parse_international_with(data, decompressor, Text::DEFAULT_MAX_SIZE)),
+        ChunkType::ICCP => store(&mut metadata.icc_profile, chunk_type, || IccProfile::parse_with(data, decompressor, IccProfile::DEFAULT_MAX_SIZE)),
+        ChunkType::CICP => store(&mut metadata.cicp, chunk_type, || CodingIndependentCodePoints::parse(data)),
+        ChunkType::EXIF => store(&mut metadata.exif, chunk_type, || Exif::parse(data)),
         _ => Ok(()),
     }
 }
@@ -82,23 +85,31 @@ fn store<T>(slot: &mut Option<T>, chunk_type: ChunkType, parse: impl FnOnce() ->
     *slot = Some(parse()?);
     Ok(())
 }
+
+/// Appends the result of a parse to `list`, for a chunk that may appear more than
+/// once. On an error `list` is left as it was.
+fn push<T>(list: &mut Vec<T>, parsed: Result<T, Error>) -> Result<(), Error> {
+    list.push(parsed?);
+    Ok(())
+}
+
 /// Checks that a chunk of `chunk_type` may appear at `position`:
-/// - `gAMA`, `cHRM` and `sRGB` must come before `PLTE` and the image data, so
-///   only `ChunkPosition::BeforePalette` is allowed.
-/// - `pHYs` must come before the image data.
+/// - `gAMA`, `cHRM`, `sRGB`, `iCCP` and `cICP` must come before `PLTE` and the
+///   image data, so only `ChunkPosition::BeforePalette` is allowed.
+/// - `pHYs` and `eXIf` must come before the image data.
 /// - `tIME` may appear anywhere.
 ///
 /// Returns `Error::MisplacedChunk` otherwise. Other chunk types are always allowed.
 fn check_position(chunk_type: ChunkType, position: ChunkPosition) -> Result<(), Error> {
     match chunk_type {
-        ChunkType::GAMA | ChunkType::CHRM | ChunkType::SRGB => {
+        ChunkType::GAMA | ChunkType::CHRM | ChunkType::SRGB | ChunkType::ICCP | ChunkType::CICP => {
             if position != ChunkPosition::BeforePalette {
                 Err(Error::MisplacedChunk(chunk_type))
             } else {
                 Ok(())
             }
         },
-        ChunkType::PHYS => {
+        ChunkType::PHYS | ChunkType::EXIF => {
             if position == ChunkPosition::AfterImageData {
                 Err(Error::MisplacedChunk(chunk_type))
             } else {
