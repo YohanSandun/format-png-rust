@@ -45,6 +45,11 @@ pub struct Text {
 }
 
 impl Text {
+    /// The cap on decompressed text that [`parse_compressed`](Self::parse_compressed)
+    /// and [`parse_international`](Self::parse_international) use, and the decoder
+    /// uses when collecting [`Metadata`](crate::Metadata): 8 MB.
+    pub const DEFAULT_MAX_SIZE: usize = 8_000_000;
+
     /// Parses `tEXt` chunk data: the keyword, a null byte, then the text in
     /// Latin-1, without a terminating null.
     ///
@@ -66,15 +71,39 @@ impl Text {
     /// Parses `zTXt` chunk data: the keyword, a null byte, the compression method
     /// (0), then the Latin-1 text as a zlib stream.
     ///
-    /// `max_size` caps the decompressed text, so a small chunk can't expand
-    /// without limit.
+    /// The text is capped at [`DEFAULT_MAX_SIZE`](Self::DEFAULT_MAX_SIZE) bytes
+    /// once decompressed, and a decompressor is set up for this call. To choose
+    /// the cap, or reuse a decompressor across many chunks, use
+    /// [`parse_compressed_with`](Self::parse_compressed_with).
+    ///
+    /// ```
+    /// use format_png::png::metadata::Text;
+    ///
+    /// let mut data = b"Comment\0\0".to_vec();
+    /// data.extend_from_slice(&rust_deflate::compress_zlib(b"made with format-png"));
+    ///
+    /// let text = Text::parse_compressed(&data)?;
+    /// assert_eq!((text.keyword.as_str(), text.text.as_str()), ("Comment", "made with format-png"));
+    /// # Ok::<(), format_png::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Same as [`parse_compressed_with`](Self::parse_compressed_with).
+    pub fn parse_compressed(data: &[u8]) -> Result<Self, Error> {
+        Self::parse_compressed_with(data, &mut Decompressor::new(), Self::DEFAULT_MAX_SIZE)
+    }
+
+    /// Like [`parse_compressed`](Self::parse_compressed), but decompresses with
+    /// `decompressor` and caps the decompressed text at `max_size` bytes, so a
+    /// small chunk can't expand without limit.
     ///
     /// # Errors
     ///
     /// - [`Error::InvalidChunkData`] if there is no null byte, the keyword is
     ///   invalid, the compression method isn't 0, or the zlib stream is corrupt.
     /// - [`Error::TextTooLong`] if the text decompresses to more than `max_size` bytes.
-    pub fn parse_compressed(
+    pub fn parse_compressed_with(
         data: &[u8],
         decompressor: &mut Decompressor,
         max_size: usize,
@@ -102,8 +131,23 @@ impl Text {
     /// translated keyword in UTF-8, a null byte, then the UTF-8 text, as a zlib
     /// stream if the flag is 1.
     ///
-    /// `max_size` caps the decompressed text, as for
-    /// [`parse_compressed`](Self::parse_compressed).
+    /// Compressed text is capped at [`DEFAULT_MAX_SIZE`](Self::DEFAULT_MAX_SIZE)
+    /// bytes once decompressed, and a decompressor is set up only if the text is
+    /// compressed. To choose the cap, or reuse a decompressor across many chunks,
+    /// use [`parse_international_with`](Self::parse_international_with).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`parse_international_with`](Self::parse_international_with).
+    pub fn parse_international(data: &[u8]) -> Result<Self, Error> {
+        Self::parse_international_impl(data, |compressed| {
+            decompress(compressed, ChunkType::ITXT, &mut Decompressor::new(), Self::DEFAULT_MAX_SIZE)
+        })
+    }
+
+    /// Like [`parse_international`](Self::parse_international), but decompresses
+    /// with `decompressor` and caps decompressed text at `max_size` bytes, as for
+    /// [`parse_compressed_with`](Self::parse_compressed_with).
     ///
     /// # Errors
     ///
@@ -113,10 +157,21 @@ impl Text {
     ///   stream is corrupt.
     /// - [`Error::TextTooLong`] if the text is compressed and decompresses to more
     ///   than `max_size` bytes.
-    pub fn parse_international(
+    pub fn parse_international_with(
         data: &[u8],
         decompressor: &mut Decompressor,
         max_size: usize,
+    ) -> Result<Self, Error> {
+        Self::parse_international_impl(data, |compressed| {
+            decompress(compressed, ChunkType::ITXT, decompressor, max_size)
+        })
+    }
+
+    /// Parses `iTXt` chunk data, calling `decompress` on the text only if it's
+    /// compressed, so callers that set up a decompressor on demand can skip it.
+    fn parse_international_impl(
+        data: &[u8],
+        decompress: impl FnOnce(&[u8]) -> Result<Vec<u8>, Error>,
     ) -> Result<Self, Error> {
         let (keyword, rest) = read_keyword(data, ChunkType::ITXT)?;
 
@@ -139,7 +194,7 @@ impl Text {
         let translated_keyword = utf8_to_string(translated_keyword_data, ChunkType::ITXT)?;
 
         let text = if compressed {
-            let decompressed = decompress(text_data, ChunkType::ITXT, decompressor, max_size)?;
+            let decompressed = decompress(text_data)?;
             utf8_to_string(&decompressed, ChunkType::ITXT)?
         } else {
             utf8_to_string(text_data, ChunkType::ITXT)?

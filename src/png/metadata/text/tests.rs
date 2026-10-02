@@ -68,11 +68,11 @@ fn corrupt_streams_report_their_own_chunk_type() {
     let mut decompressor = Decompressor::new();
 
     assert_eq!(
-        Text::parse_compressed(b"Comment\0\0garbage", &mut decompressor, 1000),
+        Text::parse_compressed_with(b"Comment\0\0garbage", &mut decompressor, 1000),
         Err(Error::InvalidChunkData(ChunkType::ZTXT))
     );
     assert_eq!(
-        Text::parse_international(b"Comment\0\x01\0\0\0garbage", &mut decompressor, 1000),
+        Text::parse_international_with(b"Comment\0\x01\0\0\0garbage", &mut decompressor, 1000),
         Err(Error::InvalidChunkData(ChunkType::ITXT))
     );
 }
@@ -85,15 +85,60 @@ fn text_over_the_limit_is_too_long() {
     let mut ztxt = b"Comment\0\0".to_vec();
     ztxt.extend_from_slice(&compressed);
     assert_eq!(
-        Text::parse_compressed(&ztxt, &mut decompressor, 99),
+        Text::parse_compressed_with(&ztxt, &mut decompressor, 99),
         Err(Error::TextTooLong { chunk_type: ChunkType::ZTXT, max_size: 99 })
     );
-    assert_eq!(Text::parse_compressed(&ztxt, &mut decompressor, 100).unwrap().text, "x".repeat(100));
+    assert_eq!(Text::parse_compressed_with(&ztxt, &mut decompressor, 100).unwrap().text, "x".repeat(100));
 
     let mut itxt = b"Comment\0\x01\0\0\0".to_vec();
     itxt.extend_from_slice(&compressed);
     assert_eq!(
-        Text::parse_international(&itxt, &mut decompressor, 99),
+        Text::parse_international_with(&itxt, &mut decompressor, 99),
         Err(Error::TextTooLong { chunk_type: ChunkType::ITXT, max_size: 99 })
+    );
+}
+
+// ---------- without a decompressor ----------
+
+#[test]
+fn parse_compressed_sets_up_its_own_decompressor() {
+    let mut data = b"Comment\0\0".to_vec();
+    data.extend_from_slice(&rust_deflate::compress_zlib(b"compressed text"));
+
+    let text = Text::parse_compressed(&data).unwrap();
+    assert_eq!((text.keyword.as_str(), text.text.as_str()), ("Comment", "compressed text"));
+    assert_eq!(text.kind, TextKind::Compressed);
+}
+
+#[test]
+fn parse_international_reads_plain_and_compressed_text() {
+    let plain = Text::parse_international(b"Title\0\0\0nb-NO\0Tittel\0bl\xC3\xA5b\xC3\xA6r").unwrap();
+    assert_eq!(plain.keyword, "Title");
+    assert_eq!(plain.language_tag, "nb-NO");
+    assert_eq!(plain.translated_keyword, "Tittel");
+    assert_eq!(plain.text, "blåbær");
+    assert_eq!(plain.kind, TextKind::International { compressed: false });
+
+    let mut data = b"Title\0\x01\0nb-NO\0Tittel\0".to_vec();
+    data.extend_from_slice(&rust_deflate::compress_zlib("blåbær".as_bytes()));
+    let compressed = Text::parse_international(&data).unwrap();
+    assert_eq!(compressed.text, "blåbær");
+    assert_eq!(compressed.kind, TextKind::International { compressed: true });
+}
+
+#[test]
+fn default_limit_applies_without_a_decompressor() {
+    let compressed = rust_deflate::compress_zlib(&vec![b'x'; Text::DEFAULT_MAX_SIZE + 1]);
+    let limit = Err(Error::TextTooLong { chunk_type: ChunkType::ZTXT, max_size: Text::DEFAULT_MAX_SIZE });
+
+    let mut ztxt = b"Comment\0\0".to_vec();
+    ztxt.extend_from_slice(&compressed);
+    assert_eq!(Text::parse_compressed(&ztxt), limit);
+
+    let mut itxt = b"Comment\0\x01\0\0\0".to_vec();
+    itxt.extend_from_slice(&compressed);
+    assert_eq!(
+        Text::parse_international(&itxt),
+        Err(Error::TextTooLong { chunk_type: ChunkType::ITXT, max_size: Text::DEFAULT_MAX_SIZE })
     );
 }

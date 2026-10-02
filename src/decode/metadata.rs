@@ -10,8 +10,6 @@ use crate::error::Error;
 use crate::png::metadata::{Chromaticities, Gamma, PhysicalDimensions, RenderingIntent, Text, Time};
 use crate::png::{Chunk, ChunkPosition, ChunkType, Metadata, OwnedChunk};
 
-const MAX_TEXT_BLOCK_SIZE: usize = 8_000_000;
-
 /// Appends a copy of `chunk`, found at `position`, to `chunks` if it's ancillary.
 /// Critical chunks (`IHDR`, `PLTE`, `IDAT`, `IEND`, and unknown critical ones)
 /// are never copied: the decoder has already used them.
@@ -68,8 +66,8 @@ fn read_known_chunk(
         ChunkType::PHYS => store(&mut metadata.physical_dimensions, chunk_type, || PhysicalDimensions::parse(data)),
         ChunkType::TIME => store(&mut metadata.time, chunk_type, || Time::parse(data)),
         ChunkType::TEXT => Ok(metadata.text.push(Text::parse_text(data)?)),
-        ChunkType::ZTXT => Ok(metadata.text.push(Text::parse_compressed(data, decompressor, MAX_TEXT_BLOCK_SIZE)?)),
-        ChunkType::ITXT => Ok(metadata.text.push(Text::parse_international(data, decompressor, MAX_TEXT_BLOCK_SIZE)?)),
+        ChunkType::ZTXT => Ok(metadata.text.push(Text::parse_compressed_with(data, decompressor, Text::DEFAULT_MAX_SIZE)?)),
+        ChunkType::ITXT => Ok(metadata.text.push(Text::parse_international_with(data, decompressor, Text::DEFAULT_MAX_SIZE)?)),
         _ => Ok(()),
     }
 }
