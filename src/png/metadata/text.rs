@@ -72,9 +72,8 @@ impl Text {
     /// # Errors
     ///
     /// - [`Error::InvalidChunkData`] if there is no null byte, the keyword is
-    ///   invalid, or the compression method isn't 0.
-    /// - [`Error::Decompression`] if the zlib stream is corrupt or decompresses to
-    ///   more than `max_size` bytes.
+    ///   invalid, the compression method isn't 0, or the zlib stream is corrupt.
+    /// - [`Error::TextTooLong`] if the text decompresses to more than `max_size` bytes.
     pub fn parse_compressed(
         data: &[u8],
         decompressor: &mut Decompressor,
@@ -87,7 +86,7 @@ impl Text {
         if *method != COMPRESSION_METHOD_ZLIB {
             return Err(Error::InvalidChunkData(ChunkType::ZTXT));
         }
-        let text = decompress(compressed, decompressor, max_size)?;
+        let text = decompress(compressed, ChunkType::ZTXT, decompressor, max_size)?;
 
         Ok(Self {
             keyword,
@@ -110,9 +109,10 @@ impl Text {
     ///
     /// - [`Error::InvalidChunkData`] if a null byte is missing, the keyword is
     ///   invalid, the flag or method has an unknown value, or the translated
-    ///   keyword or text isn't valid UTF-8.
-    /// - [`Error::Decompression`] if the text is compressed and the zlib stream is
-    ///   corrupt or decompresses to more than `max_size` bytes.
+    ///   keyword or text isn't valid UTF-8, or the text is compressed and the zlib
+    ///   stream is corrupt.
+    /// - [`Error::TextTooLong`] if the text is compressed and decompresses to more
+    ///   than `max_size` bytes.
     pub fn parse_international(
         data: &[u8],
         decompressor: &mut Decompressor,
@@ -139,7 +139,7 @@ impl Text {
         let translated_keyword = utf8_to_string(translated_keyword_data, ChunkType::ITXT)?;
 
         let text = if compressed {
-            let decompressed = decompress(text_data, decompressor, max_size)?;
+            let decompressed = decompress(text_data, ChunkType::ITXT, decompressor, max_size)?;
             utf8_to_string(&decompressed, ChunkType::ITXT)?
         } else {
             utf8_to_string(text_data, ChunkType::ITXT)?
@@ -182,12 +182,24 @@ fn split_at_null(data: &[u8], chunk_type: ChunkType) -> Result<(&[u8], &[u8]), E
 /// (32-126 and 161-255), with no leading, trailing or consecutive spaces.
 /// Returns `Error::InvalidChunkData` for `chunk_type` otherwise.
 fn read_keyword(data: &[u8], chunk_type: ChunkType) -> Result<(String, &[u8]), Error> {
-    let split = split_at_null(data, chunk_type)?;
-    let keyword = latin1_to_string(split.0);
+    let (keyword, rest) = split_at_null(data, chunk_type)?;
+    // Checked on the bytes: Latin-1 above 127 takes 2 bytes once in a `String`.
     if keyword.is_empty() || keyword.len() > MAX_KEYWORD_LENGTH {
         return Err(Error::InvalidChunkData(chunk_type));
     }
-    Ok((keyword, split.1))
+    if !keyword.iter().all(|&b| is_printable_latin1(b)) {
+        return Err(Error::InvalidChunkData(chunk_type));
+    }
+    if keyword.first() == Some(&b' ') || keyword.last() == Some(&b' ') || keyword.windows(2).any(|w| w == b"  ") {
+        return Err(Error::InvalidChunkData(chunk_type));
+    }
+    Ok((latin1_to_string(keyword), rest))
+}
+
+/// Whether `byte` is a printable Latin-1 character: 32-126 or 161-255. This
+/// leaves out the control characters and 160, the non-breaking space.
+fn is_printable_latin1(byte: u8) -> bool {
+    matches!(byte, 32..=126 | 161..=255)
 }
 
 /// Decodes Latin-1 (ISO 8859-1) bytes, where each byte is the code point of the
@@ -204,15 +216,23 @@ fn utf8_to_string(bytes: &[u8], chunk_type: ChunkType) -> Result<String, Error> 
         .map_err(|_| Error::InvalidChunkData(chunk_type))
 }
 
-/// Decompresses a zlib stream of at most `max_size` bytes, reusing `decompressor`.
+/// Decompresses the zlib stream of a `chunk_type` chunk, of at most `max_size`
+/// bytes, reusing `decompressor`.
+///
+/// Returns `Error::TextTooLong` if it decompresses to more than `max_size` bytes,
+/// and `Error::InvalidChunkData` for `chunk_type` if the stream is corrupt.
 fn decompress(
     data: &[u8],
+    chunk_type: ChunkType,
     decompressor: &mut Decompressor,
     max_size: usize,
 ) -> Result<Vec<u8>, Error> {
     decompressor
         .decompress_zlib_with(data, OutputOptions::new().max_output(max_size))
-        .map_err(|_| Error::InvalidChunkData(ChunkType::ZTXT))
+        .map_err(|e| match e {
+            rust_deflate::Error::OutputLimitExceeded => Error::TextTooLong { chunk_type, max_size },
+            _ => Error::InvalidChunkData(chunk_type),
+        })
 }
 
 #[cfg(test)]

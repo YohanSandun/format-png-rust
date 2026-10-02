@@ -128,6 +128,9 @@ pub enum Error {
     /// An ancillary chunk that may appear only once appears again. Only returned
     /// with `DecodeOptions::strict_ancillary`.
     DuplicateChunk(ChunkType),
+
+    /// A `zTXt` or `iTXt` chunk's text decompresses to more than `max_size` bytes.
+    TextTooLong { chunk_type: ChunkType, max_size: usize },
 }
 
 impl fmt::Display for Error {
@@ -199,6 +202,9 @@ impl fmt::Display for Error {
             Error::InvalidChunkData(chunk_type) => write!(f, "{chunk_type} chunk has invalid data"),
             Error::MisplacedChunk(chunk_type) => write!(f, "{chunk_type} chunk is not allowed here"),
             Error::DuplicateChunk(chunk_type) => write!(f, "more than one {chunk_type} chunk"),
+            Error::TextTooLong { chunk_type, max_size } => {
+                write!(f, "{chunk_type} text decompresses to more than {max_size} bytes")
+            }
         }
     }
 }
