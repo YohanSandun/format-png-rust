@@ -1,4 +1,4 @@
-use crate::png::{Image, ImageHeader, Palette};
+use crate::png::{Image, ImageHeader, Palette, Transparency};
 
 /// An image to encode: its header, its pixels in the PNG's own format, and the
 /// chunks that go with them. Everything is borrowed, so nothing is copied.
@@ -23,18 +23,27 @@ pub struct ImageRef<'a> {
     header: ImageHeader,
     data: &'a [u8],
     palette: Option<&'a Palette>,
+    transparency: Option<&'a Transparency>,
 }
 
 impl<'a> ImageRef<'a> {
     /// An image with `header` and the pixels in `data`, and no other chunks.
     pub fn new(header: ImageHeader, data: &'a [u8]) -> Self {
-        Self { header, data, palette: None }
+        Self { header, data, palette: None, transparency: None }
     }
 
     /// Adds a `PLTE` chunk. Indexed images need one. RGB and RGBA images may
     /// have one, as a suggested palette; grayscale images must not.
     pub fn with_palette(mut self, palette: &'a Palette) -> Self {
         self.palette = Some(palette);
+        self
+    }
+
+    /// Adds a `tRNS` chunk: one fully transparent color for grayscale and RGB
+    /// images, or an alpha value per palette entry for indexed images. Images
+    /// with an alpha channel must not have one.
+    pub fn with_transparency(mut self, transparency: &'a Transparency) -> Self {
+        self.transparency = Some(transparency);
         self
     }
 
@@ -52,19 +61,27 @@ impl<'a> ImageRef<'a> {
     pub fn palette(&self) -> Option<&'a Palette> {
         self.palette
     }
+
+    /// The transparency, if it was added.
+    pub fn transparency(&self) -> Option<&'a Transparency> {
+        self.transparency
+    }
 }
 
-/// Re-encodes a decoded image, with its palette.
+/// Re-encodes a decoded image, with its palette and transparency.
 ///
-/// TODO: carry over `tRNS`, metadata and the preserved ancillary chunks once
-/// the encoder writes them.
+/// TODO: carry over metadata and the preserved ancillary chunks once the
+/// encoder writes them.
 impl<'a> From<&'a Image> for ImageRef<'a> {
     fn from(image: &'a Image) -> Self {
-        let image_ref = ImageRef::new(*image.header(), image.data());
-        match image.palette() {
-            Some(palette) => image_ref.with_palette(palette),
-            None => image_ref,
+        let mut image_ref = ImageRef::new(*image.header(), image.data());
+        if let Some(palette) = image.palette() {
+            image_ref = image_ref.with_palette(palette);
         }
+        if let Some(transparency) = image.transparency() {
+            image_ref = image_ref.with_transparency(transparency);
+        }
+        image_ref
     }
 }
 

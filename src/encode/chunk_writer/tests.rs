@@ -1,8 +1,8 @@
 #![cfg(test)]
 
-use super::{header_data, write_chunk, write_image_data, write_signature};
+use super::{header_data, transparency_data, write_chunk, write_image_data, write_signature};
 use crate::ChunkReader;
-use crate::png::{ChunkType, ColorType, ImageHeader, Interlace, SIGNATURE};
+use crate::png::{ChunkType, ColorType, ImageHeader, Interlace, Palette, PaletteAlpha, SIGNATURE, Transparency};
 
 /// `out` after a signature, read back as (type, data) pairs with CRCs checked.
 fn read_back(out: &[u8]) -> Vec<(String, Vec<u8>)> {
@@ -110,4 +110,41 @@ fn empty_image_data_is_one_empty_idat() {
     write_image_data(&mut out, &[], 4);
 
     assert_eq!(read_back(&out), [("IDAT".to_string(), Vec::new())]);
+}
+
+// ---------- transparency_data ----------
+
+#[test]
+fn gray_transparency_is_2_bytes_big_endian() {
+    assert_eq!(transparency_data(&Transparency::Gray(0x1234)), [0x12, 0x34]);
+}
+
+#[test]
+fn rgb_transparency_is_6_bytes_big_endian() {
+    assert_eq!(transparency_data(&Transparency::Rgb([0x0102, 0x0304, 0xFFFE])), [1, 2, 3, 4, 0xFF, 0xFE]);
+}
+
+#[test]
+fn palette_transparency_is_the_alpha_values() {
+    let alpha = PaletteAlpha::new(&[0, 128, 255]);
+
+    assert_eq!(transparency_data(&Transparency::Palette(alpha)), [0, 128, 255]);
+}
+
+#[test]
+fn transparency_data_is_what_parse_reads() {
+    let header = |bit_depth, color_type| ImageHeader { width: 1, height: 1, bit_depth, color_type, interlace: Interlace::None };
+    let indexed = header(8, ColorType::Indexed);
+    let palette = Palette::parse(&[0; 12], &indexed).unwrap();
+    let cases = [
+        (header(16, ColorType::Grayscale), Transparency::Gray(0xBEEF)),
+        (header(2, ColorType::Grayscale), Transparency::Gray(3)),
+        (header(8, ColorType::Rgb), Transparency::Rgb([1, 2, 3])),
+        (header(16, ColorType::Rgb), Transparency::Rgb([0xFFFF, 0, 0x8000])),
+        (indexed, Transparency::Palette(PaletteAlpha::new(&[9, 8, 7]))),
+    ];
+
+    for (header, transparency) in cases {
+        assert_eq!(Transparency::parse(&transparency_data(&transparency), &header, Some(&palette)), Ok(transparency.clone()), "{transparency:?}");
+    }
 }

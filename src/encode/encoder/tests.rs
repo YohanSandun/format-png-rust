@@ -6,7 +6,7 @@ use super::Encoder;
 use crate::encode::image_ref::ImageRef;
 use crate::encode::options::{EncodeOptions, FilterStrategy};
 use crate::error::Error;
-use crate::png::{ColorType, FilterType, Image, ImageHeader, Interlace, Palette};
+use crate::png::{ChunkType, ColorType, FilterType, Image, ImageHeader, Interlace, Palette, PaletteAlpha, Transparency};
 use crate::{ChunkReader, Decoder};
 
 /// Every color type with every bit depth it allows.
@@ -347,5 +347,147 @@ fn palette_must_fit_the_bit_depth() {
     assert_eq!(
         Encoder::new().encode(ImageRef::new(header, &[0]).with_palette(&palette)),
         Err(Error::TooManyPaletteEntries { entries: 4, bit_depth: 1 })
+    );
+}
+
+// ---------- tRNS ----------
+
+/// Encodes `header` with deterministic pixels, the palette `indexed` images
+/// need, and `transparency`.
+fn encode_with_transparency(header: ImageHeader, transparency: &Transparency) -> Result<Vec<u8>, Error> {
+    let data = pixels(&header);
+    let palette = full_palette(header.bit_depth.min(8));
+    let mut image = ImageRef::new(header, &data).with_transparency(transparency);
+    if header.color_type == ColorType::Indexed {
+        image = image.with_palette(&palette);
+    }
+    Encoder::new().encode(image)
+}
+
+#[test]
+fn transparency_round_trips_for_every_color_type_that_allows_it() {
+    let cases = [
+        (header(13, 7, 1, ColorType::Grayscale), Transparency::Gray(1)),
+        (header(13, 7, 2, ColorType::Grayscale), Transparency::Gray(3)),
+        (header(13, 7, 4, ColorType::Grayscale), Transparency::Gray(9)),
+        (header(13, 7, 8, ColorType::Grayscale), Transparency::Gray(200)),
+        (header(13, 7, 16, ColorType::Grayscale), Transparency::Gray(0xFFFF)),
+        (header(13, 7, 8, ColorType::Rgb), Transparency::Rgb([1, 2, 3])),
+        (header(13, 7, 16, ColorType::Rgb), Transparency::Rgb([0x1234, 0, 0xFFFF])),
+        (header(13, 7, 2, ColorType::Indexed), Transparency::Palette(PaletteAlpha::from_values(&[0, 128]).unwrap())),
+        (header(13, 7, 8, ColorType::Indexed), Transparency::Palette(PaletteAlpha::from_values(&[7; 256]).unwrap())),
+    ];
+
+    for (header, transparency) in cases {
+        let decoded = decode(&encode_with_transparency(header, &transparency).unwrap());
+
+        assert_eq!(decoded.transparency(), Some(&transparency), "{header:?}");
+        assert_eq!(decoded.data(), pixels(&header), "{header:?}");
+    }
+}
+
+#[test]
+fn trns_comes_after_plte_and_before_idat() {
+    let gray = encode_with_transparency(header(4, 4, 8, ColorType::Grayscale), &Transparency::Gray(0)).unwrap();
+    let indexed = encode_with_transparency(header(4, 4, 2, ColorType::Indexed), &Transparency::Palette(PaletteAlpha::from_values(&[0]).unwrap())).unwrap();
+
+    assert_eq!(chunk_types(&gray), ["IHDR", "tRNS", "IDAT", "IEND"]);
+    assert_eq!(chunk_types(&indexed), ["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
+}
+
+#[test]
+fn rgb_with_a_suggested_palette_writes_trns_after_it() {
+    let header = header(4, 4, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let palette = full_palette(2);
+    let transparency = Transparency::Rgb([1, 2, 3]);
+
+    let png = Encoder::new().encode(ImageRef::new(header, &data).with_palette(&palette).with_transparency(&transparency)).unwrap();
+
+    assert_eq!(chunk_types(&png), ["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
+}
+
+#[test]
+fn transparent_color_decodes_with_alpha_0() {
+    let header = header(2, 1, 8, ColorType::Grayscale);
+    let transparency = Transparency::Gray(5);
+
+    let png = Encoder::new().encode(ImageRef::new(header, &[5, 6]).with_transparency(&transparency)).unwrap();
+
+    assert_eq!(crate::decode_rgba8(&png).unwrap().data(), [5, 5, 5, 0, 6, 6, 6, 255]);
+}
+
+#[test]
+fn interlaced_images_keep_their_transparency() {
+    let mut header = header(13, 7, 8, ColorType::Rgb);
+    header.interlace = Interlace::Adam7;
+    let transparency = Transparency::Rgb([10, 20, 30]);
+
+    let decoded = decode(&encode_with_transparency(header, &transparency).unwrap());
+
+    assert_eq!(decoded.transparency(), Some(&transparency));
+}
+
+#[test]
+fn images_with_alpha_must_not_have_transparency() {
+    for color_type in [ColorType::GrayscaleAlpha, ColorType::Rgba] {
+        assert_eq!(
+            encode_with_transparency(header(2, 2, 8, color_type), &Transparency::Gray(0)),
+            Err(Error::UnexpectedTransparency(color_type))
+        );
+    }
+}
+
+#[test]
+fn transparency_kind_must_match_the_color_type() {
+    let two_values = Transparency::Palette(PaletteAlpha::from_values(&[0, 0]).unwrap());
+    let cases = [
+        (ColorType::Rgb, Transparency::Gray(0), 2),
+        (ColorType::Indexed, Transparency::Gray(0), 2),
+        (ColorType::Grayscale, Transparency::Rgb([0; 3]), 6),
+        (ColorType::Indexed, Transparency::Rgb([0; 3]), 6),
+        (ColorType::Grayscale, two_values.clone(), 2),
+        (ColorType::Rgb, two_values, 2),
+    ];
+
+    for (color_type, transparency, length) in cases {
+        assert_eq!(
+            encode_with_transparency(header(2, 2, 8, color_type), &transparency),
+            Err(Error::InvalidTransparencyLength { color_type, length }),
+            "{color_type:?} with {transparency:?}"
+        );
+    }
+}
+
+#[test]
+fn transparent_color_must_fit_the_bit_depth() {
+    let too_big = [
+        (header(2, 2, 1, ColorType::Grayscale), Transparency::Gray(2)),
+        (header(2, 2, 4, ColorType::Grayscale), Transparency::Gray(16)),
+        (header(2, 2, 8, ColorType::Grayscale), Transparency::Gray(256)),
+        (header(2, 2, 8, ColorType::Rgb), Transparency::Rgb([0, 256, 0])),
+    ];
+    for (header, transparency) in too_big {
+        assert_eq!(
+            encode_with_transparency(header, &transparency),
+            Err(Error::InvalidChunkData(ChunkType::TRNS)),
+            "{header:?} with {transparency:?}"
+        );
+    }
+
+    // The largest values that fit.
+    assert!(encode_with_transparency(header(2, 2, 4, ColorType::Grayscale), &Transparency::Gray(15)).is_ok());
+    assert!(encode_with_transparency(header(2, 2, 16, ColorType::Rgb), &Transparency::Rgb([0xFFFF; 3])).is_ok());
+}
+
+#[test]
+fn palette_alpha_must_not_outnumber_the_palette() {
+    let header = header(2, 2, 8, ColorType::Indexed);
+    let palette = Palette::from_colors(&[[0; 3], [255; 3]]).unwrap();
+    let transparency = Transparency::Palette(PaletteAlpha::from_values(&[0, 0, 0]).unwrap());
+
+    assert_eq!(
+        Encoder::new().encode(ImageRef::new(header, &[0, 1, 1, 0]).with_palette(&palette).with_transparency(&transparency)),
+        Err(Error::TooManyTransparencyEntries { entries: 3, palette_entries: 2 })
     );
 }

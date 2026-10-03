@@ -50,3 +50,19 @@ fn encode_rgba8_checks_the_data_length() {
         Err(Error::InvalidImageDataLength { expected: 16, actual: 15 })
     );
 }
+
+#[test]
+fn trns_fixtures_keep_their_transparency() {
+    let mut decoder = Decoder::new();
+    let mut encoder = format_png::Encoder::new();
+
+    for path in valid_fixtures().into_iter().filter(|path| path.to_string_lossy().contains("trns")) {
+        let original = decoder.decode(&fs::read(&path).unwrap()).unwrap();
+        assert!(original.transparency().is_some(), "{}", path.display());
+
+        let again = decoder.decode(&encoder.encode(ImageRef::from(&original)).unwrap()).unwrap();
+
+        assert_eq!(again.transparency(), original.transparency(), "{}", path.display());
+        assert_eq!(again.data(), original.data(), "{}", path.display());
+    }
+}

@@ -1,5 +1,5 @@
 use crate::png::crc::crc32;
-use crate::png::{ChunkType, ImageHeader, SIGNATURE};
+use crate::png::{ChunkType, ImageHeader, SIGNATURE, Transparency};
 
 /// The longest chunk data the spec allows: 2^31 - 1 bytes.
 pub(crate) const MAX_CHUNK_LENGTH: usize = 2_147_483_647;
@@ -40,6 +40,25 @@ pub(crate) fn header_data(header: &ImageHeader) -> [u8; ImageHeader::LENGTH] {
     ihdr[11] = 0u8;
     ihdr[12] = header.interlace as u8;
     ihdr
+}
+
+/// The `tRNS` data for `transparency`: the inverse of `Transparency::parse`.
+///
+/// - `Gray`: the value as 2 bytes big-endian.
+/// - `Rgb`: red, green and blue, 2 bytes each big-endian.
+/// - `Palette`: the alpha values, one byte each.
+///
+/// Values aren't checked against the bit depth; `encoder::validate_transparency`
+/// does that.
+pub(crate) fn transparency_data(transparency: &Transparency) -> Vec<u8> {
+    match transparency {
+        Transparency::Gray(gray) => gray.to_be_bytes().to_vec(),
+        Transparency::Rgb(rgb) => {
+            let [r, g, b] = rgb.map(u16::to_be_bytes);
+            vec![r[0], r[1], g[0], g[1], b[0], b[1]]
+        },
+        Transparency::Palette(palette_alpha) => palette_alpha.values().to_vec()
+    }
 }
 
 /// Appends the zlib stream `compressed` as `IDAT` chunks of at most `max_length`

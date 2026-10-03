@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::ImageRef;
-use crate::png::{ColorType, ImageHeader, Interlace, Palette};
+use crate::png::{ColorType, ImageHeader, Interlace, Palette, Transparency};
 
 fn header(color_type: ColorType) -> ImageHeader {
     ImageHeader { width: 2, height: 1, bit_depth: 8, color_type, interlace: Interlace::None }
@@ -36,4 +36,31 @@ fn from_image_keeps_header_pixels_and_palette() {
     assert_eq!(image_ref.header(), image.header());
     assert_eq!(image_ref.data(), image.data());
     assert_eq!(image_ref.palette(), image.palette());
+}
+
+#[test]
+fn new_has_no_transparency() {
+    assert_eq!(ImageRef::new(header(ColorType::Rgb), &[0; 6]).transparency(), None);
+}
+
+#[test]
+fn with_transparency_adds_it() {
+    let transparency = Transparency::Rgb([1, 2, 3]);
+
+    let image = ImageRef::new(header(ColorType::Rgb), &[0; 6]).with_transparency(&transparency);
+
+    assert_eq!(image.transparency(), Some(&transparency));
+}
+
+#[test]
+fn from_image_keeps_transparency() {
+    for name in ["gray_8_trns.png", "rgb_16_trns.png", "indexed_2_trns.png"] {
+        let data = std::fs::read(format!("{}/tests/data/valid/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let image = crate::decode(&data).unwrap();
+
+        let image_ref = ImageRef::from(&image);
+
+        assert!(image.transparency().is_some(), "{name}");
+        assert_eq!(image_ref.transparency(), image.transparency(), "{name}");
+    }
 }

@@ -102,10 +102,44 @@ impl PaletteAlpha {
         Self { alpha, len: values.len() }
     }
 
+    /// Creates alpha values for a palette, in index order, for encoding an
+    /// image. There may be fewer than the palette has entries: the others are
+    /// opaque.
+    ///
+    /// ```
+    /// use format_png::{PaletteAlpha, Transparency};
+    ///
+    /// // Entry 0 fully transparent, entry 1 half transparent, the rest opaque.
+    /// let transparency = Transparency::Palette(PaletteAlpha::from_values(&[0, 128])?);
+    /// # Ok::<(), format_png::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidTransparencyLength`] for an indexed image if there are no
+    /// values or more than 256.
+    pub fn from_values(values: &[u8]) -> Result<Self, Error> {
+        if values.is_empty() || values.len() > MAX_ENTRIES {
+            return Err(Error::InvalidTransparencyLength { color_type: ColorType::Indexed, length: values.len() });
+        }
+        Ok(Self::new(values))
+    }
+
     /// The alpha values in the chunk, one per palette entry from index 0. There
     /// may be fewer than the palette has entries.
     pub fn values(&self) -> &[u8] {
         &self.alpha[..self.len]
+    }
+
+    /// The number of alpha values in the chunk, 1 to 256. May be less than
+    /// the palette has entries.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Always `false`: the chunk has at least one value.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     /// The alpha of palette entry `index`: its value from the chunk, or 255 past

@@ -1,12 +1,15 @@
 use rust_deflate::{CompressionOptions, Compressor};
 
-use super::chunk_writer::{MAX_CHUNK_LENGTH, header_data, write_chunk, write_image_data, write_signature};
+use super::chunk_writer::{
+    MAX_CHUNK_LENGTH, header_data, transparency_data, write_chunk, write_image_data,
+    write_signature,
+};
 use super::filter::filter_image;
 use super::image_ref::ImageRef;
 use super::options::EncodeOptions;
 use crate::error::Error;
+use crate::png::{ChunkType, Palette, Transparency};
 use crate::{ColorType, ImageHeader};
-use crate::png::ChunkType;
 
 /// A reusable PNG encoder.
 ///
@@ -16,12 +19,13 @@ use crate::png::ChunkType;
 /// For a single image, [`encode`](crate::encode) is simpler.
 ///
 /// The PNG written has the signature, `IHDR`, `PLTE` if the image has a
-/// palette, the image data as one or more `IDAT` chunks, and `IEND`.
+/// palette, `tRNS` if it has transparency, the image data as one or more `IDAT`
+/// chunks, and `IEND`.
 ///
 /// The image is interlaced if its header says
 /// [`Interlace::Adam7`](crate::Interlace::Adam7).
 ///
-/// Not supported yet: `tRNS`, metadata, and other ancillary chunks.
+/// Not supported yet: metadata and other ancillary chunks.
 #[derive(Debug)]
 pub struct Encoder {
     options: EncodeOptions,
@@ -40,7 +44,12 @@ impl Encoder {
 
     /// Creates an encoder with the given options.
     pub fn with_options(options: EncodeOptions) -> Self {
-        Self { options, compressor: Compressor::new(), scanlines: Vec::new(), compressed: Vec::new() }
+        Self {
+            options,
+            compressor: Compressor::new(),
+            scanlines: Vec::new(),
+            compressed: Vec::new(),
+        }
     }
 
     /// The options this encoder was created with.
@@ -85,14 +94,29 @@ impl Encoder {
 
         let header = image.header();
 
-        filter_image(self.options.filter, header, image.data(), &mut self.scanlines)?;
-        self.compressor.compress_zlib_into_with(&self.scanlines, &mut self.compressed, CompressionOptions::new().level(self.options.compression).strategy(self.options.compression_strategy));
+        filter_image(
+            self.options.filter,
+            header,
+            image.data(),
+            &mut self.scanlines,
+        )?;
+        self.compressor.compress_zlib_into_with(
+            &self.scanlines,
+            &mut self.compressed,
+            CompressionOptions::new()
+                .level(self.options.compression)
+                .strategy(self.options.compression_strategy),
+        );
 
         write_signature(out);
         write_chunk(out, ChunkType::IHDR, &header_data(header));
 
         if let Some(palette) = image.palette() {
             write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());
+        }
+
+        if let Some(transparency) = image.transparency() {
+            write_chunk(out, ChunkType::TRNS, &transparency_data(transparency));
         }
 
         write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
@@ -120,16 +144,99 @@ fn validate(image: &ImageRef<'_>) -> Result<(), Error> {
 
     let image_size = header.image_size()?;
     if image_size != image.data().len() {
-        return Err(Error::InvalidImageDataLength { expected: image_size, actual: image.data().len() });
+        return Err(Error::InvalidImageDataLength {
+            expected: image_size,
+            actual: image.data().len(),
+        });
     }
 
     if let Some(palette) = image.palette() {
-        if header.color_type == ColorType::Grayscale || header.color_type == ColorType::GrayscaleAlpha {
+        if header.color_type == ColorType::Grayscale
+            || header.color_type == ColorType::GrayscaleAlpha
+        {
             return Err(Error::UnexpectedPalette(header.color_type));
         }
 
         if header.color_type == ColorType::Indexed && palette.len() > 1 << header.bit_depth {
-            return Err(Error::TooManyPaletteEntries { entries: palette.len(), bit_depth: header.bit_depth });
+            return Err(Error::TooManyPaletteEntries {
+                entries: palette.len(),
+                bit_depth: header.bit_depth,
+            });
+        }
+    }
+
+    if let Some(transparency) = image.transparency() {
+        validate_transparency(header, image.palette(), transparency)?;
+    }
+
+    Ok(())
+}
+
+/// Checks that `transparency` can be written as the `tRNS` chunk of an image
+/// with `header` and `palette`. `palette` has already been checked, and is there
+/// for indexed images.
+///
+/// Errors:
+/// - `Error::UnexpectedTransparency` for grayscale with alpha and RGBA, which
+///   must not have a `tRNS` chunk.
+/// - `Error::InvalidTransparencyLength` if the kind doesn't match the color
+///   type: `Gray` is only for grayscale, `Rgb` only for RGB and `Palette` only
+///   for indexed images. The length given is the one the chunk would have: 2,
+///   6, or the number of alpha values.
+/// - `Error::InvalidChunkData` for `ChunkType::TRNS` if a gray or RGB value
+///   doesn't fit the bit depth, such as 16 for a 4-bit image. The decoder
+///   ignores those bits, so writing them would change which color is transparent.
+/// - `Error::TooManyTransparencyEntries` if an indexed image has more alpha
+///   values than palette entries.
+fn validate_transparency(
+    header: &ImageHeader,
+    palette: Option<&Palette>,
+    transparency: &Transparency,
+) -> Result<(), Error> {
+    if header.color_type == ColorType::GrayscaleAlpha || header.color_type == ColorType::Rgba {
+        return Err(Error::UnexpectedTransparency(header.color_type));
+    }
+
+    let max_sample = (1u32 << header.bit_depth) - 1;
+    let fits = |v: u16| u32::from(v) <= max_sample;
+
+    match transparency {
+        Transparency::Gray(gray) => {
+            if header.color_type != ColorType::Grayscale {
+                return Err(Error::InvalidTransparencyLength {
+                    color_type: header.color_type,
+                    length: 2,
+                });
+            }
+            if !fits(*gray) {
+                return Err(Error::InvalidChunkData(ChunkType::TRNS));
+            }
+        }
+        Transparency::Rgb(rgb) => {
+            if header.color_type != ColorType::Rgb {
+                return Err(Error::InvalidTransparencyLength {
+                    color_type: header.color_type,
+                    length: rgb.len() * 2,
+                });
+            }
+            if !rgb.iter().all(|&v| fits(v)) {
+                return Err(Error::InvalidChunkData(ChunkType::TRNS));
+            }
+        }
+        Transparency::Palette(palette_alpha) => {
+            if header.color_type != ColorType::Indexed {
+                return Err(Error::InvalidTransparencyLength {
+                    color_type: header.color_type,
+                    length: palette_alpha.len(),
+                });
+            }
+            let palette = palette.ok_or(Error::MissingPalette)?;
+            if palette_alpha.len() > palette.len() {
+                return Err(Error::TooManyTransparencyEntries {
+                    entries: palette_alpha.len(),
+                    palette_entries: palette.len(),
+                });
+            }
         }
     }
 
