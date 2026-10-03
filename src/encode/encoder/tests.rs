@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use rust_deflate::CompressionLevel;
+use rust_deflate::{CompressionLevel, Strategy as CompressionStrategy};
 
 use super::Encoder;
 use crate::encode::image_ref::ImageRef;
@@ -77,6 +77,7 @@ fn new_uses_default_options() {
     let options = Encoder::new().options().clone();
 
     assert_eq!(options.compression, CompressionLevel::MEDIUM);
+    assert_eq!(options.compression_strategy, CompressionStrategy::Dynamic);
     assert_eq!(options.filter, FilterStrategy::Adaptive);
 }
 
@@ -131,12 +132,37 @@ fn every_option_round_trips() {
 
     for filter in filters {
         for compression in [CompressionLevel::NONE, CompressionLevel::FAST, CompressionLevel::MEDIUM, CompressionLevel::BEST] {
-            let mut encoder = Encoder::with_options(EncodeOptions { compression, filter });
+            for compression_strategy in [CompressionStrategy::Stored, CompressionStrategy::Fixed, CompressionStrategy::Dynamic] {
+                let mut encoder = Encoder::with_options(EncodeOptions { compression, compression_strategy, filter });
 
-            let decoded = decode(&encoder.encode(ImageRef::new(header, &data)).unwrap());
+                let decoded = decode(&encoder.encode(ImageRef::new(header, &data)).unwrap());
 
-            assert_eq!(decoded.data(), data, "{filter:?}, {compression:?}");
+                assert_eq!(decoded.data(), data, "{filter:?}, {compression:?}, {compression_strategy:?}");
+            }
         }
+    }
+}
+
+#[test]
+fn stored_strategy_does_not_compress() {
+    // A flat image, which any real compression shrinks to almost nothing.
+    let header = header(64, 64, 8, ColorType::Rgb);
+    let data = vec![0; header.image_size().unwrap()];
+    let scanlines = header.scanline_size().unwrap();
+    let encode = |compression_strategy| {
+        let options = EncodeOptions { compression_strategy, compression: CompressionLevel::BEST, ..EncodeOptions::default() };
+        Encoder::with_options(options).encode(ImageRef::new(header, &data)).unwrap()
+    };
+
+    let stored = encode(CompressionStrategy::Stored);
+    let fixed = encode(CompressionStrategy::Fixed);
+    let dynamic = encode(CompressionStrategy::Dynamic);
+
+    assert!(stored.len() > scanlines, "stored: {} bytes for {scanlines} of scanlines", stored.len());
+    assert!(fixed.len() < scanlines / 10, "fixed: {} bytes", fixed.len());
+    assert!(dynamic.len() < scanlines / 10, "dynamic: {} bytes", dynamic.len());
+    for png in [stored, fixed, dynamic] {
+        assert_eq!(decode(&png).data(), data);
     }
 }
 

@@ -1,4 +1,4 @@
-use rust_deflate::CompressionLevel;
+use rust_deflate::{CompressionLevel, Strategy as CompressionStrategy};
 
 use crate::png::FilterType;
 
@@ -16,6 +16,13 @@ pub struct EncodeOptions {
     /// How hard to compress the image data. [`CompressionLevel::MEDIUM`] by default.
     pub compression: CompressionLevel,
 
+    /// Which kind of DEFLATE blocks the image data is compressed into.
+    /// [`CompressionStrategy::Dynamic`] by default, which gives the smallest
+    /// files. [`CompressionStrategy::Fixed`] is a little faster;
+    /// [`CompressionStrategy::Stored`] doesn't compress at all, as does
+    /// [`CompressionLevel::NONE`] whatever the strategy.
+    pub compression_strategy: CompressionStrategy,
+
     /// How to filter each row before compressing. [`FilterStrategy::Adaptive`] by default.
     pub filter: FilterStrategy,
 }
@@ -24,6 +31,7 @@ impl Default for EncodeOptions {
     fn default() -> Self {
         Self {
             compression: CompressionLevel::MEDIUM,
+            compression_strategy: CompressionStrategy::Dynamic,
             filter: FilterStrategy::Adaptive,
         }
     }

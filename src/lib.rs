@@ -67,6 +67,9 @@ pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use encode::{EncodeOptions, Encoder, FilterStrategy, ImageRef};
 pub use error::Error;
 pub use rust_deflate::CompressionLevel;
+/// Which kind of DEFLATE blocks the encoder writes; see
+/// [`EncodeOptions::compression_strategy`].
+pub use rust_deflate::Strategy as CompressionStrategy;
 pub use png::{
     Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha,
     PixelFormat, PngChunks, Transparency,

@@ -86,7 +86,7 @@ impl Encoder {
         let header = image.header();
 
         filter_image(self.options.filter, header, image.data(), &mut self.scanlines)?;
-        self.compressor.compress_zlib_into_with(&self.scanlines, &mut self.compressed, CompressionOptions::default().level(self.options.compression));
+        self.compressor.compress_zlib_into_with(&self.scanlines, &mut self.compressed, CompressionOptions::new().level(self.options.compression).strategy(self.options.compression_strategy));
 
         write_signature(out);
         write_chunk(out, ChunkType::IHDR, &header_data(header));
