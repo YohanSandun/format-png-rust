@@ -5,7 +5,7 @@ use super::filter::filter_image;
 use super::image_ref::ImageRef;
 use super::options::EncodeOptions;
 use crate::error::Error;
-use crate::{ColorType, ImageHeader, Interlace};
+use crate::{ColorType, ImageHeader};
 use crate::png::ChunkType;
 
 /// A reusable PNG encoder.
@@ -18,9 +18,10 @@ use crate::png::ChunkType;
 /// The PNG written has the signature, `IHDR`, `PLTE` if the image has a
 /// palette, the image data as one or more `IDAT` chunks, and `IEND`.
 ///
-/// Not supported yet: Adam7 interlacing (an interlaced header is written as
-/// [`Interlace::None`](crate::Interlace::None), which holds the same pixels),
-/// `tRNS`, metadata, and other ancillary chunks.
+/// The image is interlaced if its header says
+/// [`Interlace::Adam7`](crate::Interlace::Adam7).
+///
+/// Not supported yet: `tRNS`, metadata, and other ancillary chunks.
 #[derive(Debug)]
 pub struct Encoder {
     options: EncodeOptions,
@@ -82,14 +83,13 @@ impl Encoder {
         self.scanlines.clear();
         self.compressed.clear();
 
-        // TODO: drop this once filter_image writes Adam7 passes.
-        let header = ImageHeader { interlace: Interlace::None, ..*image.header() };
+        let header = image.header();
 
-        filter_image(self.options.filter, &header, image.data(), &mut self.scanlines)?;
+        filter_image(self.options.filter, header, image.data(), &mut self.scanlines)?;
         self.compressor.compress_zlib_into_with(&self.scanlines, &mut self.compressed, CompressionOptions::default().level(self.options.compression));
 
         write_signature(out);
-        write_chunk(out, ChunkType::IHDR, &header_data(&header));
+        write_chunk(out, ChunkType::IHDR, &header_data(header));
 
         if let Some(palette) = image.palette() {
             write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());

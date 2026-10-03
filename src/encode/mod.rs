@@ -5,7 +5,8 @@
 //! 1. `encoder::validate` checks the [`ImageRef`]: a valid header, pixel data
 //!    of the right length, and a palette where one is needed.
 //! 2. `filter::filter_image` adds a filter type byte to each row and filters it,
-//!    as [`FilterStrategy`] says.
+//!    as [`FilterStrategy`] says. Interlaced images are first split into their
+//!    seven Adam7 passes by `interlace::interlace_pass`, and each is filtered on its own.
 //! 3. The filtered rows are zlib-compressed into one stream.
 //! 4. `chunk_writer` writes the signature, `IHDR`, `PLTE` if there is a palette,
 //!    the stream as one or more `IDAT` chunks, and `IEND`.
@@ -17,6 +18,7 @@ mod chunk_writer;
 mod encoder;
 mod filter;
 mod image_ref;
+mod interlace;
 mod options;
 
 pub use encoder::Encoder;

@@ -193,6 +193,33 @@ fn every_strategy_unfilters_back_to_the_image() {
 }
 
 #[test]
+fn adam7_filters_each_non_empty_pass_on_its_own() {
+    // 2x2: pass 0 holds (0, 0), pass 5 holds (1, 0), and pass 6 row 1. The
+    // other passes are empty and write nothing, not even a filter type byte.
+    let mut header = header(2, 2, 8, ColorType::Grayscale);
+    header.interlace = Interlace::Adam7;
+    let mut out = Vec::new();
+
+    filter_image(FilterStrategy::Fixed(FilterType::None), &header, &[1, 2, 3, 4], &mut out).unwrap();
+
+    assert_eq!(out, [0, 1, 0, 2, 0, 3, 4]);
+    assert_eq!(out.len(), header.scanline_size().unwrap());
+}
+
+#[test]
+fn adam7_passes_start_with_no_row_above() {
+    // 1x2: pass 0 is row 0 and pass 6 is row 1. With Up, pass 6's only row
+    // must not subtract row 0, which is in another pass.
+    let mut header = header(1, 2, 8, ColorType::Grayscale);
+    header.interlace = Interlace::Adam7;
+    let mut out = Vec::new();
+
+    filter_image(FilterStrategy::Fixed(FilterType::Up), &header, &[10, 30], &mut out).unwrap();
+
+    assert_eq!(out, [2, 10, 2, 30]);
+}
+
+#[test]
 fn filter_image_replaces_old_contents() {
     let mut out = vec![0xEE; 100];
 

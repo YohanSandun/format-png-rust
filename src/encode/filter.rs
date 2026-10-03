@@ -1,8 +1,10 @@
-use crate::ColorType;
+use super::interlace::interlace_pass;
 use super::options::FilterStrategy;
+use crate::ColorType;
 use crate::decode::unfilter::{paeth_predictor};
 use crate::error::Error;
-use crate::png::{ImageHeader, FilterType};
+use crate::png::adam7::PASSES;
+use crate::png::{FilterType, ImageHeader, Interlace};
 
 /// Applies one filter: the inverse of `decode::unfilter::unfilter_row`, with the
 /// same arguments. `row` holds one row's raw bytes, and the filtered bytes,
@@ -145,50 +147,61 @@ pub(crate) fn choose_filter(bpp: usize, previous: Option<&[u8]>, row: &[u8], scr
 /// `strategy` picks the filters; see [`FilterStrategy`]. `data` is assumed to be
 /// the right length, which `encoder::validate` checks.
 ///
-/// Returns `Error::ImageTooLarge` if the filtered size overflows `usize`.
+/// Interlaced images are filtered pass by pass, in the order of `PASSES`: each
+/// pass's pixels are gathered into rows of their own with `interlace_pass`, and
+/// the first row of each pass has no row above. Empty passes, which small images
+/// have, write nothing, not even filter type bytes.
 ///
-/// TODO: Adam7. Interlaced images are filtered pass by pass, each pass's rows
-/// on their own, with the first row of each pass having no row above.
+/// Returns `Error::ImageTooLarge` if the filtered size overflows `usize`.
 pub(crate) fn filter_image(strategy: FilterStrategy, header: &ImageHeader, data: &[u8], out: &mut Vec<u8>) -> Result<(), Error> {
     out.clear();
+    out.reserve(header.scanline_size()?);
 
-    let bpp = header.filter_bpp();
-    let row_bytes = header.stride()?;
-    if row_bytes == 0 {
-        return Ok(());
+    match header.interlace {
+        Interlace::None => {
+            debug_assert_eq!(data.len() % header.stride()?, 0);
+            filter_rows(strategy, header, data, header.stride()?, out);
+        }
+        Interlace::Adam7 => {
+            let mut pass_data = Vec::new();
+            for pass in &PASSES {
+                let (width, height) = pass.size(header.width, header.height);
+                if width == 0 || height == 0 {
+                    continue;
+                }
+                interlace_pass(header, pass, data, &mut pass_data);
+                filter_rows(strategy, header, &pass_data, header.row_bytes(width)?, out);
+            }
+        }
     }
-    debug_assert_eq!(data.len() % row_bytes, 0);
 
-    let rows = data.len() / row_bytes;
-    let size = (row_bytes + 1).checked_mul(rows).ok_or(Error::ImageTooLarge)?;
-    out.resize(size, 0);
+    Ok(())
+}
 
-    let adaptive_allowed =
-        header.color_type != ColorType::Indexed && header.bit_depth >= 8;
+/// Filters `data`, rows of `row_bytes` bytes each, and appends them to `out`,
+/// each as a filter type byte then the filtered bytes. The first row has no row
+/// above. `strategy` picks the filters, as for `filter_image`.
+fn filter_rows(strategy: FilterStrategy, header: &ImageHeader, data: &[u8], row_bytes: usize, out: &mut Vec<u8>) {
+    let bpp = header.filter_bpp();
+    let adaptive_allowed = header.color_type != ColorType::Indexed && header.bit_depth >= 8;
 
     let mut scratch = vec![0u8; row_bytes];
     let mut previous: Option<&[u8]> = None;
 
-    for (scanline, dst) in data
-        .chunks_exact(row_bytes)
-        .zip(out.chunks_exact_mut(row_bytes + 1))
-    {
+    for scanline in data.chunks_exact(row_bytes) {
         let filter_type = match strategy {
             FilterStrategy::Fixed(ft) => ft,
-            FilterStrategy::Adaptive if adaptive_allowed => {
-                choose_filter(bpp, previous, scanline, &mut scratch)
-            }
+            FilterStrategy::Adaptive if adaptive_allowed => choose_filter(bpp, previous, scanline, &mut scratch),
             FilterStrategy::Adaptive => FilterType::None,
         };
 
-        let (type_byte, filtered) = dst.split_first_mut().unwrap();
-        *type_byte = filter_type as u8;
-        filter_row(filter_type, bpp, previous, scanline, filtered);
+        out.push(filter_type as u8);
+        let start = out.len();
+        out.resize(start + row_bytes, 0);
+        filter_row(filter_type, bpp, previous, scanline, &mut out[start..]);
 
         previous = Some(scanline);
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

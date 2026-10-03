@@ -27,10 +27,7 @@ fn every_valid_fixture_survives_a_round_trip() {
         let png = encoder.encode(ImageRef::from(&original)).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let again = decoder.decode(&png).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
-        // Interlacing isn't written yet, so compare everything but that.
-        let mut header = *original.header();
-        header.interlace = format_png::Interlace::None;
-        assert_eq!(*again.header(), header, "{}", path.display());
+        assert_eq!(again.header(), original.header(), "{}", path.display());
         assert_eq!(again.data(), original.data(), "{}", path.display());
         assert_eq!(again.palette(), original.palette(), "{}", path.display());
     }

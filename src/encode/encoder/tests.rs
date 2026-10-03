@@ -37,6 +37,20 @@ fn pixels(header: &ImageHeader) -> Vec<u8> {
     (0..header.image_size().unwrap()).map(|i| (i as u8).wrapping_mul(97).wrapping_add(13).rotate_left(3)).collect()
 }
 
+/// [`pixels`] with the padding bits at the end of each row zeroed. Interlaced
+/// images don't store them, so they decode as zeros.
+fn pixels_with_zero_padding(header: &ImageHeader) -> Vec<u8> {
+    let stride = header.stride().unwrap();
+    let mut data = pixels(header);
+    let used_bits = header.width as usize * usize::from(header.bits_per_pixel()) % 8;
+    if used_bits != 0 {
+        for row in data.chunks_exact_mut(stride) {
+            *row.last_mut().unwrap() &= 0xFF << (8 - used_bits);
+        }
+    }
+    data
+}
+
 /// A palette with as many colors as `bit_depth` can index, so any pixel data is valid.
 fn full_palette(bit_depth: u8) -> Palette {
     let colors: Vec<[u8; 3]> = (0..1u16 << bit_depth).map(|i| [i as u8, (i * 3) as u8, (255 - i) as u8]).collect();
@@ -127,15 +141,41 @@ fn every_option_round_trips() {
 }
 
 #[test]
-fn interlaced_header_is_written_without_interlacing() {
-    let mut header = header(13, 7, 8, ColorType::Rgb);
-    header.interlace = Interlace::Adam7;
-    let data = pixels(&header);
+fn every_format_round_trips_interlaced() {
+    // Sizes where some passes are empty (1x1, 2x2, 3x5), every pass is full
+    // (8x8), and rows under 8 bits end mid-byte (13x7, 9x9).
+    for (color_type, bit_depth) in FORMATS {
+        for (width, height) in [(1, 1), (2, 2), (3, 5), (8, 8), (9, 9), (13, 7)] {
+            let mut header = header(width, height, bit_depth, color_type);
+            header.interlace = Interlace::Adam7;
+            let data = pixels_with_zero_padding(&header);
+            let palette = full_palette(bit_depth.min(8));
+            let image = match color_type {
+                ColorType::Indexed => ImageRef::new(header, &data).with_palette(&palette),
+                _ => ImageRef::new(header, &data),
+            };
 
-    let decoded = decode(&Encoder::new().encode(ImageRef::new(header, &data)).unwrap());
+            let png = Encoder::new().encode(image).unwrap();
+            let decoded = decode(&png);
 
-    assert_eq!(decoded.header().interlace, Interlace::None);
-    assert_eq!(decoded.data(), data);
+            assert_eq!(*decoded.header(), header, "{color_type:?} {bit_depth}, {width}x{height}");
+            assert_eq!(decoded.data(), data, "{color_type:?} {bit_depth}, {width}x{height}");
+        }
+    }
+}
+
+#[test]
+fn interlaced_and_plain_encodes_decode_to_the_same_pixels() {
+    let plain = header(13, 7, 8, ColorType::Rgb);
+    let interlaced = ImageHeader { interlace: Interlace::Adam7, ..plain };
+    let data = pixels(&plain);
+    let mut encoder = Encoder::new();
+
+    let plain_png = encoder.encode(ImageRef::new(plain, &data)).unwrap();
+    let interlaced_png = encoder.encode(ImageRef::new(interlaced, &data)).unwrap();
+
+    assert_ne!(plain_png, interlaced_png);
+    assert_eq!(decode(&plain_png).data(), decode(&interlaced_png).data());
 }
 
 // ---------- the file written ----------

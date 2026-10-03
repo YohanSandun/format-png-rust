@@ -1,6 +1,6 @@
 mod chunk_reader;
 mod decoder;
-mod deinterlace;
+pub(crate) mod deinterlace;
 mod image_data;
 mod metadata;
 mod options;
