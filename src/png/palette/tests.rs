@@ -131,3 +131,32 @@ fn get_returns_none_past_the_end() {
     assert_eq!(palette.get(3), None);
     assert_eq!(palette.get(255), None);
 }
+
+// ---------- from_colors ----------
+
+#[test]
+fn from_colors_keeps_the_colors_in_order() {
+    let palette = Palette::from_colors(&[[1, 2, 3], [4, 5, 6]]).unwrap();
+
+    assert_eq!(palette.colors(), [[1, 2, 3], [4, 5, 6]]);
+    assert_eq!(palette.len(), 2);
+}
+
+#[test]
+fn from_colors_accepts_1_to_256_colors() {
+    assert!(Palette::from_colors(&[[0; 3]]).is_ok());
+    assert_eq!(Palette::from_colors(&[[7; 3]; 256]).map(|p| p.len()), Ok(256));
+}
+
+#[test]
+fn from_colors_rejects_no_colors_or_more_than_256() {
+    assert_eq!(Palette::from_colors(&[]), Err(Error::InvalidPaletteLength(0)));
+    assert_eq!(Palette::from_colors(&[[0; 3]; 257]), Err(Error::InvalidPaletteLength(771)));
+}
+
+#[test]
+fn from_colors_equals_the_same_palette_parsed() {
+    let header = ImageHeader { width: 1, height: 1, bit_depth: 8, color_type: ColorType::Indexed, interlace: Interlace::None };
+
+    assert_eq!(Palette::from_colors(&[[1, 2, 3], [4, 5, 6]]), Palette::parse(&[1, 2, 3, 4, 5, 6], &header));
+}

@@ -60,10 +60,13 @@ pub mod png;
 mod convert;
 mod io;
 mod decode;
+mod encode;
 mod error;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
+pub use encode::{EncodeOptions, Encoder, FilterStrategy, ImageRef};
 pub use error::Error;
+pub use rust_deflate::CompressionLevel;
 pub use png::{
     Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha,
     PixelFormat, PngChunks, Transparency,
@@ -133,6 +136,31 @@ pub fn read_chunks(data: &[u8]) -> Result<PngChunks<'_>, Error> {
 /// Same as [`Decoder::read_header`].
 pub fn read_header(data: &[u8]) -> Result<ImageHeader, Error> {
     Decoder::new().read_header(data)
+}
+
+/// Encodes an image to PNG with default options; see [`ImageRef`].
+///
+/// This is the simple API. To encode many images, reuse an [`Encoder`] and call
+/// [`Encoder::encode_into`] instead.
+///
+/// # Errors
+///
+/// Same as [`Encoder::encode_into`].
+pub fn encode(image: ImageRef<'_>) -> Result<Vec<u8>, Error> {
+    Encoder::new().encode(image)
+}
+
+/// Encodes 8-bit RGBA pixels to PNG with default options: the reverse of
+/// [`decode_rgba8`]. `data` is `width × height × 4` bytes, rows top to bottom
+/// with no padding, as a browser canvas's `ImageData` holds them.
+///
+/// # Errors
+///
+/// Same as [`Encoder::encode_into`]; [`Error::InvalidImageDataLength`] if `data`
+/// is the wrong size.
+pub fn encode_rgba8(width: u32, height: u32, data: &[u8]) -> Result<Vec<u8>, Error> {
+    let header = ImageHeader { width, height, bit_depth: 8, color_type: ColorType::Rgba, interlace: Interlace::None };
+    encode(ImageRef::new(header, data))
 }
 
 #[cfg(test)]

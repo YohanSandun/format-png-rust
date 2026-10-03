@@ -131,6 +131,10 @@ pub enum Error {
 
     /// A `zTXt` or `iTXt` chunk's text decompresses to more than `max_size` bytes.
     TextTooLong { chunk_type: ChunkType, max_size: usize },
+
+    /// The pixel data given to the encoder isn't the size its header needs:
+    /// `ImageHeader::image_size` bytes.
+    InvalidImageDataLength { expected: usize, actual: usize },
 }
 
 impl fmt::Display for Error {
@@ -204,6 +208,9 @@ impl fmt::Display for Error {
             Error::DuplicateChunk(chunk_type) => write!(f, "more than one {chunk_type} chunk"),
             Error::TextTooLong { chunk_type, max_size } => {
                 write!(f, "{chunk_type} text decompresses to more than {max_size} bytes")
+            }
+            Error::InvalidImageDataLength { expected, actual } => {
+                write!(f, "pixel data is {actual} bytes, expected {expected}")
             }
         }
     }

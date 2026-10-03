@@ -1,0 +1,39 @@
+#![cfg(test)]
+
+use super::ImageRef;
+use crate::png::{ColorType, ImageHeader, Interlace, Palette};
+
+fn header(color_type: ColorType) -> ImageHeader {
+    ImageHeader { width: 2, height: 1, bit_depth: 8, color_type, interlace: Interlace::None }
+}
+
+#[test]
+fn new_has_no_palette() {
+    let image = ImageRef::new(header(ColorType::Rgb), &[1, 2, 3, 4, 5, 6]);
+
+    assert_eq!(*image.header(), header(ColorType::Rgb));
+    assert_eq!(image.data(), [1, 2, 3, 4, 5, 6]);
+    assert_eq!(image.palette(), None);
+}
+
+#[test]
+fn with_palette_adds_it() {
+    let header = header(ColorType::Indexed);
+    let palette = Palette::parse(&[0, 0, 0, 255, 255, 255], &header).unwrap();
+
+    let image = ImageRef::new(header, &[0, 1]).with_palette(&palette);
+
+    assert_eq!(image.palette(), Some(&palette));
+}
+
+#[test]
+fn from_image_keeps_header_pixels_and_palette() {
+    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/indexed_4.png")).unwrap();
+    let image = crate::decode(&data).unwrap();
+
+    let image_ref = ImageRef::from(&image);
+
+    assert_eq!(image_ref.header(), image.header());
+    assert_eq!(image_ref.data(), image.data());
+    assert_eq!(image_ref.palette(), image.palette());
+}

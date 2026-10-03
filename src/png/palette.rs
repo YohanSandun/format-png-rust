@@ -64,6 +64,35 @@ impl Palette {
         })
     }
 
+    /// Creates a palette from `colors`, in index order, for encoding an image.
+    ///
+    /// ```
+    /// use format_png::Palette;
+    ///
+    /// let palette = Palette::from_colors(&[[0, 0, 0], [255, 255, 255]])?;
+    /// assert_eq!(palette.get(1), Some([255, 255, 255]));
+    /// # Ok::<(), format_png::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidPaletteLength`] if there are no colors or more than 256.
+    /// The length given is in bytes, 3 per color, as for a `PLTE` chunk.
+    pub fn from_colors(colors: &[[u8; 3]]) -> Result<Self, Error> {
+        if colors.is_empty() || colors.len() > MAX_ENTRIES {
+            return Err(Error::InvalidPaletteLength(colors.len()*3));
+        }
+
+        let mut pallete = [[0u8; 3]; MAX_ENTRIES];
+        let n = colors.len().min(MAX_ENTRIES);
+        pallete[..n].copy_from_slice(&colors[..n]);
+
+        Ok(Self {
+            colors: pallete,
+            len: colors.len(),
+        })
+    }
+
     /// The colors, in index order.
     pub fn colors(&self) -> &[[u8; 3]] {
         &self.colors[..self.len]
