@@ -1,4 +1,4 @@
-//! PNG format types shared by the decoder (and, later, the encoder).
+//! PNG format types shared by the decoder and the encoder.
 
 pub(crate) mod adam7;
 mod bitmap;

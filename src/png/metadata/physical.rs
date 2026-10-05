@@ -17,6 +17,7 @@ pub struct PhysicalDimensions {
     pub x: u32,
     /// Pixels per unit, vertically.
     pub y: u32,
+    /// What `x` and `y` count pixels per.
     pub unit: Unit,
 }
 

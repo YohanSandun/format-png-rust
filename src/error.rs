@@ -2,12 +2,14 @@ use std::fmt;
 
 use crate::png::{ChunkType, ColorType};
 
-/// Everything that can go wrong while decoding a PNG.
+/// Everything that can go wrong while decoding or encoding a PNG.
 ///
-/// New variants will be added as more of the format is decoded, so matches on it
-/// need a wildcard arm.
+/// New variants will be added as more of the format is supported, so matches on
+/// it need a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+// Each variant's docs describe its fields.
+#[allow(missing_docs)]
 pub enum Error {
     /// The input ended unexpectedly.
     UnexpectedEndOfInput,

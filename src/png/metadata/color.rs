@@ -61,13 +61,21 @@ impl Gamma {
 /// 31270 means 0.3127.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Chromaticities {
+    /// The white point's x.
     pub white_x: u32,
+    /// The white point's y.
     pub white_y: u32,
+    /// The red primary's x.
     pub red_x: u32,
+    /// The red primary's y.
     pub red_y: u32,
+    /// The green primary's x.
     pub green_x: u32,
+    /// The green primary's y.
     pub green_y: u32,
+    /// The blue primary's x.
     pub blue_x: u32,
+    /// The blue primary's y.
     pub blue_y: u32,
 }
 
@@ -100,9 +108,15 @@ impl Chromaticities {
 /// a display's range should be handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderingIntent {
+    /// Keeps the relationships between colors, for photographs.
     Perceptual = 0,
+    /// Keeps colors the display can show exactly, and maps the rest to the
+    /// nearest it can, relative to the white point. For logos and illustrations.
     RelativeColorimetric = 1,
+    /// Keeps saturation at the cost of hue and lightness, for charts and graphs.
     Saturation = 2,
+    /// Like relative colorimetric, but without adapting to the display's white
+    /// point, for proofs that simulate another medium.
     AbsoluteColorimetric = 3,
 }
 
