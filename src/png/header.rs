@@ -24,6 +24,7 @@ pub enum ColorType {
 impl ColorType {
     /// Samples per pixel: 1 for grayscale and indexed, 2 for grayscale with alpha,
     /// 3 for RGB and 4 for RGBA.
+    #[must_use]
     pub fn channels(self) -> u8 {
         match self {
             ColorType::Grayscale | ColorType::Indexed => 1u8,
@@ -156,6 +157,7 @@ impl ImageHeader {
     }
 
     /// Bits per pixel: channels × bit depth, from 1 to 64.
+    #[must_use]
     pub fn bits_per_pixel(&self) -> u8 {
         self.color_type.channels() * self.bit_depth
     }

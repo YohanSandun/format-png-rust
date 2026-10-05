@@ -39,7 +39,13 @@ pub(crate) fn interlace_pass(header: &ImageHeader, pass: &Pass, data: &[u8], out
 }
 
 /// Pixels of 1 to 8 bytes: each is copied as a block.
-fn gather_whole_byte_pixels(image_row: &[u8], pass_row: &mut [u8], bytes: usize, x_start: usize, x_step: usize) {
+fn gather_whole_byte_pixels(
+    image_row: &[u8],
+    pass_row: &mut [u8],
+    bytes: usize,
+    x_start: usize,
+    x_step: usize,
+) {
     for (px, pixel) in pass_row.chunks_exact_mut(bytes).enumerate() {
         let x = x_start + px * x_step;
         pixel.copy_from_slice(&image_row[x * bytes..][..bytes]);
@@ -48,7 +54,14 @@ fn gather_whole_byte_pixels(image_row: &[u8], pass_row: &mut [u8], bytes: usize,
 
 /// Pixels of 1, 2 or 4 bits, packed most significant bits first: each is masked
 /// out of the image row and into its place in the pass row, which starts zeroed.
-fn gather_packed_pixels(image_row: &[u8], pass_row: &mut [u8], bits: usize, width: usize, x_start: usize, x_step: usize) {
+fn gather_packed_pixels(
+    image_row: &[u8],
+    pass_row: &mut [u8],
+    bits: usize,
+    width: usize,
+    x_start: usize,
+    x_step: usize,
+) {
     let mask = (1u8 << bits) - 1;
 
     for px in 0..width {

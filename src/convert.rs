@@ -80,7 +80,11 @@ pub(crate) fn is_unchanged(header: &ImageHeader, format: PixelFormat) -> bool {
 /// With the sizes known at compile time, the compiler removes the bounds checks
 /// and can vectorize the loop.
 #[inline(always)]
-fn map_pixels<const IN: usize, const OUT: usize>(row: &[u8], out: &mut [u8], f: impl Fn(&[u8; IN]) -> [u8; OUT]) {
+fn map_pixels<const IN: usize, const OUT: usize>(
+    row: &[u8],
+    out: &mut [u8],
+    f: impl Fn(&[u8; IN]) -> [u8; OUT],
+) {
     let (pixels, _) = row.as_chunks::<IN>();
     let (out, _) = out.as_chunks_mut::<OUT>();
     for (out, pixel) in out.iter_mut().zip(pixels) {
@@ -167,7 +171,9 @@ fn indexed_table(source: &Source<'_>) -> Result<([[u8; 4]; 256], usize), Error> 
 /// the output has alpha.
 fn color_key<'a>(source: &Source<'a>, format: PixelFormat) -> Option<&'a Transparency> {
     match (format, source.transparency) {
-        (PixelFormat::Rgba8, Some(key @ (Transparency::Gray(_) | Transparency::Rgb(_)))) => Some(key),
+        (PixelFormat::Rgba8, Some(key @ (Transparency::Gray(_) | Transparency::Rgb(_)))) => {
+            Some(key)
+        }
         _ => None,
     }
 }
@@ -180,7 +186,12 @@ fn color_key<'a>(source: &Source<'a>, format: PixelFormat) -> Option<&'a Transpa
 /// comparison uses the samples at the image's own bit depth, before they're
 /// scaled to 8 bits: two 16-bit values with the same high byte can differ.
 /// `key` is `Transparency::Gray` for grayscale and `Transparency::Rgb` for RGB.
-pub(crate) fn convert_row_with_key(header: &ImageHeader, key: &Transparency, row: &[u8], out: &mut [u8]) {
+pub(crate) fn convert_row_with_key(
+    header: &ImageHeader,
+    key: &Transparency,
+    row: &[u8],
+    out: &mut [u8],
+) {
     let bit_depth = header.bit_depth;
     let channels = usize::from(header.color_type.channels());
 
@@ -267,7 +278,12 @@ pub(crate) fn convert_indexed_row(
 /// Returns `Error::MissingPalette` for indexed images without a palette, and
 /// any error from [`convert_indexed_row`].
 #[cfg(test)]
-pub(crate) fn convert_row(source: &Source<'_>, row: &[u8], format: PixelFormat, out: &mut [u8]) -> Result<(), Error> {
+pub(crate) fn convert_row(
+    source: &Source<'_>,
+    row: &[u8],
+    format: PixelFormat,
+    out: &mut [u8],
+) -> Result<(), Error> {
     if source.header.color_type == ColorType::Indexed {
         let (table, entries) = indexed_table(source)?;
         return convert_indexed_row(&table, entries, source.header.bit_depth, format, row, out);
@@ -288,7 +304,10 @@ fn convert_row_general(header: &ImageHeader, format: PixelFormat, row: &[u8], ou
     let channels = usize::from(header.color_type.channels());
     let bytes_per_pixel = format.bytes_per_pixel();
     let sample = |x: usize, channel: usize| {
-        scale_to_8(read_sample(row, x * channels + channel, bit_depth), bit_depth)
+        scale_to_8(
+            read_sample(row, x * channels + channel, bit_depth),
+            bit_depth,
+        )
     };
 
     for (x, pixel) in out.chunks_exact_mut(bytes_per_pixel).enumerate() {
@@ -316,14 +335,20 @@ fn convert_row_general(header: &ImageHeader, format: PixelFormat, row: &[u8], ou
 /// Returns `Error::ImageTooLarge` if the output size overflows `usize`,
 /// `Error::MissingPalette` for indexed images without a palette, and any error
 /// from [`convert_indexed_row`].
-pub(crate) fn convert(source: &Source<'_>, format: PixelFormat, out: &mut Vec<u8>) -> Result<(), Error> {
+pub(crate) fn convert(
+    source: &Source<'_>,
+    format: PixelFormat,
+    out: &mut Vec<u8>,
+) -> Result<(), Error> {
     let width = usize::try_from(source.header.width).map_err(|_| Error::ImageTooLarge)?;
     let height = usize::try_from(source.header.height).map_err(|_| Error::ImageTooLarge)?;
 
     let bitmap_stride = width
         .checked_mul(format.bytes_per_pixel())
         .ok_or(Error::ImageTooLarge)?;
-    let bitmap_size = bitmap_stride.checked_mul(height).ok_or(Error::ImageTooLarge)?;
+    let bitmap_size = bitmap_stride
+        .checked_mul(height)
+        .ok_or(Error::ImageTooLarge)?;
 
     let header = source.header;
     let rows = source.data.chunks_exact(source.stride);

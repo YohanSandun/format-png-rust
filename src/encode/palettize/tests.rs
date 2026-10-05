@@ -4,12 +4,20 @@ use super::palettize;
 use crate::png::{ColorType, ImageHeader, Interlace, Transparency};
 
 fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType) -> ImageHeader {
-    ImageHeader { width, height, bit_depth, color_type, interlace: Interlace::None }
+    ImageHeader {
+        width,
+        height,
+        bit_depth,
+        color_type,
+        interlace: Interlace::None,
+    }
 }
 
 /// An RGB row of `count` distinct colors, one pixel each.
 fn distinct_rgb(count: usize) -> Vec<u8> {
-    (0..count).flat_map(|i| [i as u8, (i >> 8) as u8, 7]).collect()
+    (0..count)
+        .flat_map(|i| [i as u8, (i >> 8) as u8, 7])
+        .collect()
 }
 
 #[test]
@@ -30,10 +38,25 @@ fn rgb_becomes_indices_into_a_palette_in_order_of_appearance() {
 
 #[test]
 fn bit_depth_is_the_smallest_that_fits() {
-    for (colors, bit_depth) in [(1, 1), (2, 1), (3, 2), (4, 2), (5, 4), (16, 4), (17, 8), (256, 8)] {
+    for (colors, bit_depth) in [
+        (1, 1),
+        (2, 1),
+        (3, 2),
+        (4, 2),
+        (5, 4),
+        (16, 4),
+        (17, 8),
+        (256, 8),
+    ] {
         let mut out = Vec::new();
 
-        let palettized = palettize(&header(colors as u32, 1, 8, ColorType::Rgb), &distinct_rgb(colors), None, &mut out).unwrap();
+        let palettized = palettize(
+            &header(colors as u32, 1, 8, ColorType::Rgb),
+            &distinct_rgb(colors),
+            None,
+            &mut out,
+        )
+        .unwrap();
 
         assert_eq!(palettized.header.bit_depth, bit_depth, "{colors} colors");
         assert_eq!(palettized.palette.len(), colors);
@@ -44,7 +67,15 @@ fn bit_depth_is_the_smallest_that_fits() {
 fn more_than_256_colors_stay_as_they_are() {
     let mut out = Vec::new();
 
-    assert_eq!(palettize(&header(257, 1, 8, ColorType::Rgb), &distinct_rgb(257), None, &mut out), None);
+    assert_eq!(
+        palettize(
+            &header(257, 1, 8, ColorType::Rgb),
+            &distinct_rgb(257),
+            None,
+            &mut out
+        ),
+        None
+    );
 }
 
 #[test]
@@ -59,7 +90,11 @@ fn only_8_bit_rgb_and_rgba_are_converted() {
         header(2, 1, 16, ColorType::Rgba),
     ] {
         let data = vec![0; header.image_size().unwrap()];
-        assert_eq!(palettize(&header, &data, None, &mut out), None, "{header:?}");
+        assert_eq!(
+            palettize(&header, &data, None, &mut out),
+            None,
+            "{header:?}"
+        );
     }
 }
 
@@ -75,7 +110,10 @@ fn translucent_colors_come_first_and_go_in_trns() {
     let palettized = palettize(&header(4, 1, 8, ColorType::Rgba), &data, None, &mut out).unwrap();
 
     // Translucent ones first, each group in order of appearance.
-    assert_eq!(palettized.palette.colors(), [[0, 255, 0], [255, 255, 255], [255, 0, 0], [0, 0, 255]]);
+    assert_eq!(
+        palettized.palette.colors(),
+        [[0, 255, 0], [255, 255, 255], [255, 0, 0], [0, 0, 255]]
+    );
     match palettized.transparency {
         Some(Transparency::Palette(alpha)) => assert_eq!(alpha.values(), [0, 128]),
         other => panic!("{other:?}"),
@@ -110,7 +148,13 @@ fn rgb_color_key_becomes_a_transparent_entry() {
     let key = Transparency::Rgb([2, 2, 2]);
     let mut out = Vec::new();
 
-    let palettized = palettize(&header(3, 1, 8, ColorType::Rgb), &data, Some(&key), &mut out).unwrap();
+    let palettized = palettize(
+        &header(3, 1, 8, ColorType::Rgb),
+        &data,
+        Some(&key),
+        &mut out,
+    )
+    .unwrap();
 
     assert_eq!(palettized.palette.colors(), [[2, 2, 2], [1, 1, 1]]);
     match palettized.transparency {

@@ -83,13 +83,22 @@ pub(crate) fn palettize(
     // 2. Translucent entries first. The sort is stable, so each group keeps
     //    the order of first appearance, and the output is deterministic.
     colors.sort_by_key(|color| color[3] == 255);
-    let index: HashMap<[u8; 4], u8> = colors.iter().enumerate().map(|(i, &color)| (color, i as u8)).collect();
+    let index: HashMap<[u8; 4], u8> = colors
+        .iter()
+        .enumerate()
+        .map(|(i, &color)| (color, i as u8))
+        .collect();
 
     let rgb: Vec<[u8; 3]> = colors.iter().map(|&[r, g, b, _]| [r, g, b]).collect();
     let palette = Palette::from_colors(&rgb).expect("1 to 256 colors");
-    let alpha: Vec<u8> = colors.iter().map(|color| color[3]).take_while(|&a| a != 255).collect();
-    let transparency = (!alpha.is_empty())
-        .then(|| Transparency::Palette(PaletteAlpha::from_values(&alpha).expect("1 to 256 values")));
+    let alpha: Vec<u8> = colors
+        .iter()
+        .map(|color| color[3])
+        .take_while(|&a| a != 255)
+        .collect();
+    let transparency = (!alpha.is_empty()).then(|| {
+        Transparency::Palette(PaletteAlpha::from_values(&alpha).expect("1 to 256 values"))
+    });
 
     // 3. Pack the indices at the smallest bit depth, most significant bits
     //    first, with each row padded to a whole byte.
@@ -99,7 +108,11 @@ pub(crate) fn palettize(
         5..=16 => 4,
         _ => 8,
     };
-    let header = ImageHeader { bit_depth, color_type: ColorType::Indexed, ..*header };
+    let header = ImageHeader {
+        bit_depth,
+        color_type: ColorType::Indexed,
+        ..*header
+    };
     // Can't fail: indexed rows are never longer than the RGB rows they replace.
     let stride = header.stride().ok()?;
     out.clear();
@@ -116,7 +129,11 @@ pub(crate) fn palettize(
         }
     }
 
-    Some(Palettized { header, palette, transparency })
+    Some(Palettized {
+        header,
+        palette,
+        transparency,
+    })
 }
 
 #[cfg(test)]

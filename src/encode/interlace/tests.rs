@@ -6,7 +6,13 @@ use crate::png::adam7::PASSES;
 use crate::png::{ColorType, ImageHeader, Interlace};
 
 fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType) -> ImageHeader {
-    ImageHeader { width, height, bit_depth, color_type, interlace: Interlace::Adam7 }
+    ImageHeader {
+        width,
+        height,
+        bit_depth,
+        color_type,
+        interlace: Interlace::Adam7,
+    }
 }
 
 fn pass(header: &ImageHeader, index: usize, data: &[u8]) -> Vec<u8> {
@@ -19,7 +25,9 @@ fn pass(header: &ImageHeader, index: usize, data: &[u8]) -> Vec<u8> {
 /// no pass holds them, so they can't come back from the passes.
 fn pixels(header: &ImageHeader) -> Vec<u8> {
     let stride = header.stride().unwrap();
-    let mut data: Vec<u8> = (0..header.image_size().unwrap()).map(|i| (i as u8).wrapping_mul(97).wrapping_add(13).rotate_left(3)).collect();
+    let mut data: Vec<u8> = (0..header.image_size().unwrap())
+        .map(|i| (i as u8).wrapping_mul(97).wrapping_add(13).rotate_left(3))
+        .collect();
     let used_bits = header.width as usize * usize::from(header.bits_per_pixel()) % 8;
     if used_bits != 0 {
         for row in data.chunks_exact_mut(stride) {
@@ -39,7 +47,10 @@ fn passes_of_an_8x8_image_hold_the_spec_pixels() {
     assert_eq!(pass(&header, 2, &data), [32, 36]);
     assert_eq!(pass(&header, 3, &data), [2, 6, 34, 38]);
     assert_eq!(pass(&header, 4, &data), [16, 18, 20, 22, 48, 50, 52, 54]);
-    assert_eq!(pass(&header, 5, &data), [1, 3, 5, 7, 17, 19, 21, 23, 33, 35, 37, 39, 49, 51, 53, 55]);
+    assert_eq!(
+        pass(&header, 5, &data),
+        [1, 3, 5, 7, 17, 19, 21, 23, 33, 35, 37, 39, 49, 51, 53, 55]
+    );
     let odd_rows: Vec<u8> = (8..16).chain(24..32).chain(40..48).chain(56..64).collect();
     assert_eq!(pass(&header, 6, &data), odd_rows);
 }
@@ -80,7 +91,10 @@ fn empty_passes_are_empty() {
     let header = header(1, 1, 8, ColorType::Rgba);
 
     for index in 1..7 {
-        assert!(pass(&header, index, &[1, 2, 3, 4]).is_empty(), "pass {index}");
+        assert!(
+            pass(&header, index, &[1, 2, 3, 4]).is_empty(),
+            "pass {index}"
+        );
     }
 }
 
@@ -119,7 +133,10 @@ fn deinterlace_pass_puts_every_pass_back() {
                 deinterlace_pass(&header, pass, &pass_data, &mut restored);
             }
 
-            assert_eq!(restored, data, "{color_type:?} {bit_depth}, {width}x{height}");
+            assert_eq!(
+                restored, data,
+                "{color_type:?} {bit_depth}, {width}x{height}"
+            );
         }
     }
 }

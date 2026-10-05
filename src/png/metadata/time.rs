@@ -29,7 +29,10 @@ impl Time {
     ///   The day isn't checked against the month, so February 31 is accepted.
     pub fn parse(data: &[u8]) -> Result<Self, Error> {
         if data.len() != 7 {
-            return Err(Error::InvalidChunkLength { chunk_type: ChunkType::TIME, length: data.len() });
+            return Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::TIME,
+                length: data.len(),
+            });
         }
 
         let year = u16::from_be_bytes([data[0], data[1]]);
@@ -39,11 +42,23 @@ impl Time {
         let minute = data[5];
         let second = data[6];
 
-        if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        if !(1..=12).contains(&month)
+            || !(1..=31).contains(&day)
+            || hour > 23
+            || minute > 59
+            || second > 60
+        {
             return Err(Error::InvalidChunkData(ChunkType::TIME));
         }
 
-        Ok(Self { year, month, day, hour, minute, second })
+        Ok(Self {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+        })
     }
 }
 

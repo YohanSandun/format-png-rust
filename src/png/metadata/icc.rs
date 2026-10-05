@@ -55,7 +55,11 @@ impl IccProfile {
     ///   stream is corrupt.
     /// - [`Error::TextTooLong`] if the profile decompresses to more than
     ///   `max_size` bytes.
-    pub fn parse_with(data: &[u8], decompressor: &mut Decompressor, max_size: usize) -> Result<Self, Error> {
+    pub fn parse_with(
+        data: &[u8],
+        decompressor: &mut Decompressor,
+        max_size: usize,
+    ) -> Result<Self, Error> {
         let (name, rest) = read_keyword(data, ChunkType::ICCP)?;
         let [method, compressed @ ..] = rest else {
             return Err(Error::InvalidChunkData(ChunkType::ICCP));
@@ -64,7 +68,10 @@ impl IccProfile {
             return Err(Error::InvalidChunkData(ChunkType::ICCP));
         }
 
-        Ok(Self { name, profile: decompress(compressed, ChunkType::ICCP, decompressor, max_size)? })
+        Ok(Self {
+            name,
+            profile: decompress(compressed, ChunkType::ICCP, decompressor, max_size)?,
+        })
     }
 }
 

@@ -1,4 +1,4 @@
-﻿use crate::error::Error;
+use crate::error::Error;
 
 pub struct ByteReader<'a> {
     data: &'a [u8],
@@ -26,11 +26,13 @@ impl<'a> ByteReader<'a> {
     }
 
     pub(crate) fn read_bytes(&mut self, length: usize) -> Result<&'a [u8], Error> {
-        let end = self.pos
+        let end = self
+            .pos
             .checked_add(length)
             .ok_or(Error::UnexpectedEndOfInput)?;
 
-        let data = self.data
+        let data = self
+            .data
             .get(self.pos..end)
             .ok_or(Error::UnexpectedEndOfInput)?;
 

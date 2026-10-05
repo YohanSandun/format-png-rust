@@ -9,11 +9,13 @@ use super::image_ref::ImageRef;
 use super::options::{EncodeOptions, PaletteMode, StripChunks};
 use super::palettize::palettize;
 use super::strip::strip_metadata;
+use crate::encode::extra_chunks::{validate_extra_chunks, write_extra_chunks};
+use crate::encode::metadata::{
+    validate_metadata, write_metadata_after_palette, write_metadata_before_palette,
+};
 use crate::error::Error;
 use crate::png::{ChunkType, Palette, Transparency};
 use crate::{ChunkPosition, ColorType, ImageHeader};
-use crate::encode::extra_chunks::{validate_extra_chunks, write_extra_chunks};
-use crate::encode::metadata::{validate_metadata, write_metadata_after_palette, write_metadata_before_palette};
 
 /// The largest image data, in bytes, for which `PaletteMode::Auto` also
 /// encodes the image as given and keeps the smaller file: 64×64 RGBA. The
@@ -60,11 +62,13 @@ pub struct Encoder {
 
 impl Encoder {
     /// Creates an encoder with [`EncodeOptions::default`].
+    #[must_use]
     pub fn new() -> Self {
         Self::with_options(EncodeOptions::default())
     }
 
     /// Creates an encoder with the given options.
+    #[must_use]
     pub fn with_options(options: EncodeOptions) -> Self {
         Self {
             options,
@@ -77,6 +81,7 @@ impl Encoder {
     }
 
     /// The options this encoder was created with.
+    #[must_use]
     pub fn options(&self) -> &EncodeOptions {
         &self.options
     }
@@ -114,12 +119,17 @@ impl Encoder {
         let image = match self.options.strip {
             StripChunks::Keep => image,
             mode => {
-                stripped_metadata = image.metadata().map(|metadata| strip_metadata(metadata, mode));
+                stripped_metadata = image
+                    .metadata()
+                    .map(|metadata| strip_metadata(metadata, mode));
                 // No extra chunks: neither mode keeps any.
                 let mut stripped = ImageRef::new(*image.header(), image.data());
                 // An indexed image needs its palette. Any other image's palette is
                 // only a suggestion that viewers ignore, so it goes too.
-                if let Some(palette) = image.palette().filter(|_| image.header().color_type == ColorType::Indexed) {
+                if let Some(palette) = image
+                    .palette()
+                    .filter(|_| image.header().color_type == ColorType::Indexed)
+                {
                     stripped = stripped.with_palette(palette);
                 }
                 if let Some(transparency) = image.transparency() {
@@ -145,9 +155,16 @@ impl Encoder {
     /// `encode_into` after stripping and validation: converts the image to
     /// indexed color if `PaletteMode::Auto` can, with the indices in `indexed`,
     /// and writes the smaller of the two for small images.
-    fn encode_validated(&mut self, image: ImageRef<'_>, indexed: &mut Vec<u8>, out: &mut Vec<u8>) -> Result<(), Error> {
+    fn encode_validated(
+        &mut self,
+        image: ImageRef<'_>,
+        indexed: &mut Vec<u8>,
+        out: &mut Vec<u8>,
+    ) -> Result<(), Error> {
         let palettized = match self.options.palette {
-            PaletteMode::Auto => palettize(image.header(), image.data(), image.transparency(), indexed),
+            PaletteMode::Auto => {
+                palettize(image.header(), image.data(), image.transparency(), indexed)
+            }
             _ => None,
         };
         let Some(palettized) = palettized else {
@@ -186,7 +203,12 @@ impl Encoder {
     /// Filters, compresses and writes `image` as a PNG to `out`, replacing its
     /// contents. `image` has been validated. `keep_unsafe` is
     /// `EncodeOptions::keep_unsafe_chunks`, or `false` for a converted image.
-    fn write_png(&mut self, image: &ImageRef<'_>, keep_unsafe: bool, out: &mut Vec<u8>) -> Result<(), Error> {
+    fn write_png(
+        &mut self,
+        image: &ImageRef<'_>,
+        keep_unsafe: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<(), Error> {
         out.clear();
         self.scanlines.clear();
         self.compressed.clear();
@@ -203,7 +225,8 @@ impl Encoder {
             image.data(),
             &mut self.scanlines,
         )?;
-        self.compressor.compress_zlib_into_with(&self.scanlines, &mut self.compressed, compression);
+        self.compressor
+            .compress_zlib_into_with(&self.scanlines, &mut self.compressed, compression);
 
         write_signature(out);
         write_chunk(out, ChunkType::IHDR, &header_data(header));

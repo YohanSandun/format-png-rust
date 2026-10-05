@@ -86,24 +86,24 @@
 
 #![warn(missing_docs)]
 
-pub mod png;
 mod convert;
-mod io;
 mod decode;
 mod encode;
 mod error;
+mod io;
+pub mod png;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use encode::{EncodeOptions, Encoder, FilterStrategy, ImageRef, PaletteMode, StripChunks};
 pub use error::Error;
+pub use png::{
+    Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette,
+    PaletteAlpha, PixelFormat, PngChunks, Transparency,
+};
 pub use rust_deflate::CompressionLevel;
 /// Which kind of DEFLATE blocks the encoder writes; see
 /// [`EncodeOptions::compression_strategy`].
 pub use rust_deflate::Strategy as CompressionStrategy;
-pub use png::{
-    Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha,
-    PixelFormat, PngChunks, Transparency,
-};
 
 /// Decodes a PNG to 8-bit RGBA, ready for a browser canvas's `ImageData`.
 ///
@@ -192,7 +192,13 @@ pub fn encode(image: ImageRef<'_>) -> Result<Vec<u8>, Error> {
 /// Same as [`Encoder::encode_into`]; [`Error::InvalidImageDataLength`] if `data`
 /// is the wrong size.
 pub fn encode_rgba8(width: u32, height: u32, data: &[u8]) -> Result<Vec<u8>, Error> {
-    let header = ImageHeader { width, height, bit_depth: 8, color_type: ColorType::Rgba, interlace: Interlace::None };
+    let header = ImageHeader {
+        width,
+        height,
+        bit_depth: 8,
+        color_type: ColorType::Rgba,
+        interlace: Interlace::None,
+    };
     encode(ImageRef::new(header, data))
 }
 

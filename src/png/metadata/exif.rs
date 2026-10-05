@@ -37,7 +37,10 @@ impl Exif {
     ///   and 42 in that order.
     pub fn parse(data: &[u8]) -> Result<Self, Error> {
         if data.len() < TIFF_HEADER_LENGTH {
-            return Err(Error::InvalidChunkLength { chunk_type: ChunkType::EXIF, length: data.len() });
+            return Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::EXIF,
+                length: data.len(),
+            });
         }
 
         if data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A && data[3] == 0 {
@@ -56,11 +59,13 @@ impl Exif {
     }
 
     /// The Exif data, starting with the TIFF header.
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// The byte order every value in [`data`](Self::data) uses.
+    #[must_use]
     pub fn byte_order(&self) -> ExifByteOrder {
         self.byte_order
     }

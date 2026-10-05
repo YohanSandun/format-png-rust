@@ -24,29 +24,49 @@ fn passes_cover_every_pixel_of_an_8x8_block_once() {
 
 #[test]
 fn first_pass_is_every_eighth_pixel() {
-    assert_eq!(PASSES[0], Pass { x_start: 0, y_start: 0, x_step: 8, y_step: 8 });
+    assert_eq!(
+        PASSES[0],
+        Pass {
+            x_start: 0,
+            y_start: 0,
+            x_step: 8,
+            y_step: 8
+        }
+    );
 }
 
 // ---------- size ----------
 
 #[test]
 fn size_of_8x8_image() {
-    assert_eq!(sizes(8, 8), [(1, 1), (1, 1), (2, 1), (2, 2), (4, 2), (4, 4), (8, 4)]);
+    assert_eq!(
+        sizes(8, 8),
+        [(1, 1), (1, 1), (2, 1), (2, 2), (4, 2), (4, 4), (8, 4)]
+    );
 }
 
 #[test]
 fn size_of_13x7_image() {
-    assert_eq!(sizes(13, 7), [(2, 1), (2, 1), (4, 1), (3, 2), (7, 2), (6, 4), (13, 3)]);
+    assert_eq!(
+        sizes(13, 7),
+        [(2, 1), (2, 1), (4, 1), (3, 2), (7, 2), (6, 4), (13, 3)]
+    );
 }
 
 #[test]
 fn size_of_1x1_image_leaves_most_passes_empty() {
-    assert_eq!(sizes(1, 1), [(1, 1), (0, 1), (1, 0), (0, 1), (1, 0), (0, 1), (1, 0)]);
+    assert_eq!(
+        sizes(1, 1),
+        [(1, 1), (0, 1), (1, 0), (0, 1), (1, 0), (0, 1), (1, 0)]
+    );
 }
 
 #[test]
 fn size_of_3x2_image() {
-    assert_eq!(sizes(3, 2), [(1, 1), (0, 1), (1, 0), (1, 1), (2, 0), (1, 1), (3, 1)]);
+    assert_eq!(
+        sizes(3, 2),
+        [(1, 1), (0, 1), (1, 0), (1, 1), (2, 0), (1, 1), (3, 1)]
+    );
 }
 
 #[test]

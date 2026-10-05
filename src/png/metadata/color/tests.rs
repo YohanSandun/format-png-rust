@@ -21,7 +21,10 @@ fn gamma_reads_the_largest_value() {
 
 #[test]
 fn gamma_rejects_zero() {
-    assert_eq!(Gamma::parse(&[0; 4]), Err(Error::InvalidChunkData(ChunkType::GAMA)));
+    assert_eq!(
+        Gamma::parse(&[0; 4]),
+        Err(Error::InvalidChunkData(ChunkType::GAMA))
+    );
 }
 
 #[test]
@@ -29,7 +32,10 @@ fn gamma_rejects_other_lengths() {
     for length in [0, 3, 5, 8] {
         assert_eq!(
             Gamma::parse(&vec![1; length]),
-            Err(Error::InvalidChunkLength { chunk_type: ChunkType::GAMA, length }),
+            Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::GAMA,
+                length
+            }),
             "{length} bytes"
         );
     }
@@ -64,7 +70,10 @@ fn chromaticities_reject_other_lengths() {
     for length in [0, 4, 31, 33] {
         assert_eq!(
             Chromaticities::parse(&vec![0; length]),
-            Err(Error::InvalidChunkLength { chunk_type: ChunkType::CHRM, length }),
+            Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::CHRM,
+                length
+            }),
             "{length} bytes"
         );
     }
@@ -88,7 +97,10 @@ fn rendering_intent_reads_every_value() {
 #[test]
 fn rendering_intent_rejects_values_above_3() {
     for byte in [4, 255] {
-        assert_eq!(RenderingIntent::parse(&[byte]), Err(Error::InvalidChunkData(ChunkType::SRGB)));
+        assert_eq!(
+            RenderingIntent::parse(&[byte]),
+            Err(Error::InvalidChunkData(ChunkType::SRGB))
+        );
     }
 }
 
@@ -97,7 +109,10 @@ fn rendering_intent_rejects_other_lengths() {
     for length in [0, 2] {
         assert_eq!(
             RenderingIntent::parse(&vec![0; length]),
-            Err(Error::InvalidChunkLength { chunk_type: ChunkType::SRGB, length }),
+            Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::SRGB,
+                length
+            }),
             "{length} bytes"
         );
     }

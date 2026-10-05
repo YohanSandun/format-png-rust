@@ -1,5 +1,10 @@
 # format-png
 
+[![crates.io](https://img.shields.io/crates/v/format-png.svg)](https://crates.io/crates/format-png)
+[![docs.rs](https://img.shields.io/docsrs/format-png)](https://docs.rs/format-png)
+[![CI](https://github.com/YohanSandun/format-png-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/YohanSandun/format-png-rust/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A PNG decoder and encoder in pure Rust, with no `unsafe` code. It has a simple
 API for getting pixels on screen or into a file, and full control when you need
 it: reusable decoders and encoders for many images, the image in its own pixel

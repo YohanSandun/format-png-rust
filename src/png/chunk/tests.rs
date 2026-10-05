@@ -36,7 +36,10 @@ fn from_bytes_rejects_bytes_between_upper_and_lower_case() {
 fn from_bytes_rejects_non_ascii() {
     let bytes = [0xC9, b'H', b'D', b'R'];
 
-    assert_eq!(ChunkType::from_bytes(bytes), Err(Error::InvalidChunkType(bytes)));
+    assert_eq!(
+        ChunkType::from_bytes(bytes),
+        Err(Error::InvalidChunkType(bytes))
+    );
 }
 
 // ---------- property bits ----------
@@ -57,7 +60,11 @@ fn public_chunks() {
 #[test]
 fn reserved_bit() {
     assert!(ChunkType::IHDR.is_reserved_bit_valid());
-    assert!(!ChunkType::from_bytes(*b"IHdR").unwrap().is_reserved_bit_valid());
+    assert!(
+        !ChunkType::from_bytes(*b"IHdR")
+            .unwrap()
+            .is_reserved_bit_valid()
+    );
 }
 
 #[test]

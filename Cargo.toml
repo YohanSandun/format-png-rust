@@ -9,7 +9,7 @@ repository = "https://github.com/YohanSandun/format-png-rust"
 readme = "README.md"
 keywords = ["png", "image", "decoder", "encoder", "codec"]
 categories = ["multimedia::images", "multimedia::encoding", "encoding", "parser-implementations"]
-exclude = ["benches/data/", "**/__pycache__/", ".idea/", "*.iml"]
+exclude = [".github/", "benches/data/", "**/__pycache__/", ".idea/", "*.iml"]
 
 [dependencies]
 rust-deflate = "0.4.0"

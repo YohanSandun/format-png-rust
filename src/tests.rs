@@ -31,7 +31,11 @@ fn read_header_rejects_non_png() {
 
 #[test]
 fn decode_reads_pixels() {
-    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/rgba_8_1x1.png")).unwrap();
+    let data = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/valid/rgba_8_1x1.png"
+    ))
+    .unwrap();
     let image = crate::decode(&data).unwrap();
 
     assert_eq!((image.width(), image.height()), (1, 1));
@@ -46,7 +50,11 @@ fn decode_rejects_non_png() {
 
 #[test]
 fn decode_rgba8_and_rgb8_convert_pixels() {
-    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/rgba_8_1x1.png")).unwrap();
+    let data = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/valid/rgba_8_1x1.png"
+    ))
+    .unwrap();
 
     // generate.py: sample(0, 0, c) = c * 53
     let rgba = crate::decode_rgba8(&data).unwrap();

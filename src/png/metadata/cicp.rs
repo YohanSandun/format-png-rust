@@ -41,7 +41,10 @@ impl CodingIndependentCodePoints {
     ///   full-range flag isn't 0 or 1.
     pub fn parse(data: &[u8]) -> Result<Self, Error> {
         if data.len() != 4 {
-            return Err(Error::InvalidChunkLength { chunk_type: ChunkType::CICP, length: data.len() } );
+            return Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::CICP,
+                length: data.len(),
+            });
         }
         if data[2] != 0 || data[3] > 1 {
             return Err(Error::InvalidChunkData(ChunkType::CICP));

@@ -5,7 +5,9 @@ use rust_deflate::Decompressor;
 use super::Decoder;
 use crate::decode::options::DecodeOptions;
 use crate::error::Error;
-use crate::png::{ChunkType, ColorType, ImageHeader, Interlace, PixelFormat, SIGNATURE, Transparency};
+use crate::png::{
+    ChunkType, ColorType, ImageHeader, Interlace, PixelFormat, SIGNATURE, Transparency,
+};
 
 /// Signature + IHDR for a 1x1, 8-bit RGBA image, with its correct CRC.
 const PNG_1X1_RGBA: [u8; 33] = [
@@ -41,7 +43,10 @@ fn rgba_1x1_header() -> ImageHeader {
 }
 
 fn lenient_options() -> DecodeOptions {
-    DecodeOptions { validate_crc: false, ..DecodeOptions::default() }
+    DecodeOptions {
+        validate_crc: false,
+        ..DecodeOptions::default()
+    }
 }
 
 fn with_corrupted_crc(png: &[u8]) -> Vec<u8> {
@@ -90,7 +95,10 @@ fn chunks_exposes_first_chunk() {
 fn chunks_rejects_non_png() {
     let decoder = Decoder::new();
 
-    assert!(matches!(decoder.chunks(b"GIF89a"), Err(Error::InvalidSignature)));
+    assert!(matches!(
+        decoder.chunks(b"GIF89a"),
+        Err(Error::InvalidSignature)
+    ));
 }
 
 #[test]
@@ -104,7 +112,14 @@ fn chunks_respects_validate_crc_option() {
     ));
 
     let lenient = Decoder::with_options(lenient_options());
-    assert!(lenient.chunks(&data).unwrap().next_chunk().unwrap().is_some());
+    assert!(
+        lenient
+            .chunks(&data)
+            .unwrap()
+            .next_chunk()
+            .unwrap()
+            .is_some()
+    );
 }
 
 // ---------- read_header ----------
@@ -155,14 +170,20 @@ fn read_header_still_works_after_a_failure() {
 fn read_header_rejects_invalid_signature() {
     let mut decoder = Decoder::new();
 
-    assert_eq!(decoder.read_header(&PNG_1X1_RGBA[1..]), Err(Error::InvalidSignature));
+    assert_eq!(
+        decoder.read_header(&PNG_1X1_RGBA[1..]),
+        Err(Error::InvalidSignature)
+    );
 }
 
 #[test]
 fn read_header_rejects_signature_without_chunks() {
     let mut decoder = Decoder::new();
 
-    assert_eq!(decoder.read_header(&SIGNATURE), Err(Error::MissingImageHeader));
+    assert_eq!(
+        decoder.read_header(&SIGNATURE),
+        Err(Error::MissingImageHeader)
+    );
 }
 
 #[test]
@@ -178,7 +199,10 @@ fn read_header_rejects_other_first_chunk() {
 fn read_header_rejects_truncated_ihdr() {
     let mut decoder = Decoder::new();
 
-    assert_eq!(decoder.read_header(&PNG_1X1_RGBA[..20]), Err(Error::UnexpectedEndOfInput));
+    assert_eq!(
+        decoder.read_header(&PNG_1X1_RGBA[..20]),
+        Err(Error::UnexpectedEndOfInput)
+    );
 }
 
 #[test]
@@ -195,7 +219,10 @@ fn read_header_rejects_wrong_crc_by_default() {
 fn read_header_accepts_wrong_crc_when_validation_off() {
     let mut decoder = Decoder::with_options(lenient_options());
 
-    assert_eq!(decoder.read_header(&with_corrupted_crc(&PNG_1X1_RGBA)), Ok(rgba_1x1_header()));
+    assert_eq!(
+        decoder.read_header(&with_corrupted_crc(&PNG_1X1_RGBA)),
+        Ok(rgba_1x1_header())
+    );
 }
 
 #[test]
@@ -218,7 +245,13 @@ fn chunk(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
     out
 }
 
-fn ihdr(width: u32, height: u32, bit_depth: u8, color_type: ColorType, interlace: Interlace) -> Vec<u8> {
+fn ihdr(
+    width: u32,
+    height: u32,
+    bit_depth: u8,
+    color_type: ColorType,
+    interlace: Interlace,
+) -> Vec<u8> {
     let mut data = width.to_be_bytes().to_vec();
     data.extend_from_slice(&height.to_be_bytes());
     data.extend_from_slice(&[bit_depth, color_type as u8, 0, 0, interlace as u8]);
@@ -236,11 +269,18 @@ fn png_of(chunks: &[Vec<u8>]) -> Vec<u8> {
 
 /// A complete PNG whose single IDAT holds `scanlines`, zlib-compressed.
 fn png(header: Vec<u8>, scanlines: &[u8]) -> Vec<u8> {
-    png_of(&[header, chunk(b"IDAT", &rust_deflate::compress_zlib(scanlines)), chunk(b"IEND", b"")])
+    png_of(&[
+        header,
+        chunk(b"IDAT", &rust_deflate::compress_zlib(scanlines)),
+        chunk(b"IEND", b""),
+    ])
 }
 
 fn rgba_1x1() -> Vec<u8> {
-    png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[0, 1, 2, 3, 4])
+    png(
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        &[0, 1, 2, 3, 4],
+    )
 }
 
 // ---------- decode: success ----------
@@ -257,15 +297,24 @@ fn decode_1x1_rgba() {
 #[test]
 fn decode_reverses_filters() {
     // 2x2 gray: row 0 uses Sub, row 1 uses Up
-    let data = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
+    let data = png(
+        ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None),
+        &[1, 10, 5, 2, 1, 1],
+    );
 
-    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[10, 15, 11, 16]);
+    assert_eq!(
+        Decoder::new().decode(&data).unwrap().data(),
+        &[10, 15, 11, 16]
+    );
 }
 
 #[test]
 fn decode_keeps_sub_byte_pixels_packed() {
     // 10x1 1-bit gray: 2 bytes per row, the last 6 bits padding
-    let data = png(ihdr(10, 1, 1, ColorType::Grayscale, Interlace::None), &[0, 0b1010_1010, 0b1100_0000]);
+    let data = png(
+        ihdr(10, 1, 1, ColorType::Grayscale, Interlace::None),
+        &[0, 0b1010_1010, 0b1100_0000],
+    );
     let image = Decoder::new().decode(&data).unwrap();
 
     assert_eq!(image.stride(), 2);
@@ -274,9 +323,15 @@ fn decode_keeps_sub_byte_pixels_packed() {
 
 #[test]
 fn decode_keeps_16_bit_samples_big_endian() {
-    let data = png(ihdr(2, 1, 16, ColorType::Grayscale, Interlace::None), &[0, 0x12, 0x34, 0xAB, 0xCD]);
+    let data = png(
+        ihdr(2, 1, 16, ColorType::Grayscale, Interlace::None),
+        &[0, 0x12, 0x34, 0xAB, 0xCD],
+    );
 
-    assert_eq!(Decoder::new().decode(&data).unwrap().data(), &[0x12, 0x34, 0xAB, 0xCD]);
+    assert_eq!(
+        Decoder::new().decode(&data).unwrap().data(),
+        &[0x12, 0x34, 0xAB, 0xCD]
+    );
 }
 
 #[test]
@@ -284,7 +339,10 @@ fn decode_puts_adam7_passes_back_together() {
     // 3x2 gray: pass 1 is (0, 0), pass 4 is (2, 0), pass 6 is (1, 0), pass 7 is row 1.
     // Pass 7 uses Sub to check each pass is unfiltered on its own.
     let scanlines = [0, 1, 0, 3, 0, 2, 1, 4, 1, 1];
-    let data = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &scanlines);
+    let data = png(
+        ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7),
+        &scanlines,
+    );
     let image = Decoder::new().decode(&data).unwrap();
 
     assert_eq!(image.header().interlace, Interlace::Adam7);
@@ -333,8 +391,14 @@ fn decode_into_replaces_old_contents() {
 fn decoder_and_buffer_can_be_reused_for_different_images() {
     let mut decoder = Decoder::new();
     let mut out = Vec::new();
-    let gray = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
-    let interlaced = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &[0, 1, 0, 3, 0, 2, 1, 4, 1, 1]);
+    let gray = png(
+        ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None),
+        &[1, 10, 5, 2, 1, 1],
+    );
+    let interlaced = png(
+        ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7),
+        &[0, 1, 0, 3, 0, 2, 1, 4, 1, 1],
+    );
 
     decoder.decode_into(&gray, &mut out).unwrap();
     assert_eq!(out, [10, 15, 11, 16]);
@@ -349,7 +413,10 @@ fn decoder_and_buffer_can_be_reused_for_different_images() {
 #[test]
 fn decode_still_works_after_a_failure() {
     let mut decoder = Decoder::new();
-    let broken = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[9, 1, 2, 3, 4]);
+    let broken = png(
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        &[9, 1, 2, 3, 4],
+    );
 
     assert!(decoder.decode(&broken).is_err());
     assert_eq!(decoder.decode(&rgba_1x1()).unwrap().data(), &[1, 2, 3, 4]);
@@ -367,7 +434,10 @@ fn decode_passes_on_header_errors() {
 
 #[test]
 fn decode_rejects_missing_idat() {
-    let data = png_of(&[ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), chunk(b"IEND", b"")]);
+    let data = png_of(&[
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        chunk(b"IEND", b""),
+    ]);
 
     assert_eq!(Decoder::new().decode(&data), Err(Error::MissingImageData));
 }
@@ -394,7 +464,10 @@ fn decode_rejects_non_consecutive_idat() {
         chunk(b"IEND", b""),
     ]);
 
-    assert_eq!(Decoder::new().decode(&data), Err(Error::NonConsecutiveImageData));
+    assert_eq!(
+        Decoder::new().decode(&data),
+        Err(Error::NonConsecutiveImageData)
+    );
 }
 
 #[test]
@@ -403,30 +476,51 @@ fn decode_rejects_short_image_data() {
 
     assert_eq!(
         Decoder::new().decode(&data),
-        Err(Error::ImageDataTooShort { expected: 5, actual: 3 })
+        Err(Error::ImageDataTooShort {
+            expected: 5,
+            actual: 3
+        })
     );
 }
 
 #[test]
 fn decode_rejects_long_image_data() {
-    let data = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[0, 1, 2, 3, 4, 5]);
+    let data = png(
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        &[0, 1, 2, 3, 4, 5],
+    );
 
-    assert_eq!(Decoder::new().decode(&data), Err(Error::ImageDataTooLong { expected: 5 }));
+    assert_eq!(
+        Decoder::new().decode(&data),
+        Err(Error::ImageDataTooLong { expected: 5 })
+    );
 }
 
 #[test]
 fn decode_rejects_invalid_filter_type() {
-    let data = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[7, 1, 2, 3, 4]);
+    let data = png(
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        &[7, 1, 2, 3, 4],
+    );
 
-    assert_eq!(Decoder::new().decode(&data), Err(Error::InvalidFilterType(7)));
+    assert_eq!(
+        Decoder::new().decode(&data),
+        Err(Error::InvalidFilterType(7))
+    );
 }
 
 #[test]
 fn decode_rejects_invalid_filter_type_in_adam7_pass() {
     let scanlines = [0, 1, 0, 3, 0, 2, 9, 4, 1, 1];
-    let data = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &scanlines);
+    let data = png(
+        ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7),
+        &scanlines,
+    );
 
-    assert_eq!(Decoder::new().decode(&data), Err(Error::InvalidFilterType(9)));
+    assert_eq!(
+        Decoder::new().decode(&data),
+        Err(Error::InvalidFilterType(9))
+    );
 }
 
 #[test]
@@ -437,7 +531,10 @@ fn decode_rejects_corrupt_zlib_stream() {
         chunk(b"IEND", b""),
     ]);
 
-    assert!(matches!(Decoder::new().decode(&data), Err(Error::Decompression(_))));
+    assert!(matches!(
+        Decoder::new().decode(&data),
+        Err(Error::Decompression(_))
+    ));
 }
 
 #[test]
@@ -462,9 +559,15 @@ fn decode_checks_idat_crc_unless_turned_off() {
     let iend = data.len() - 12;
     data[iend - 1] ^= 0xFF; // last byte of the IDAT CRC
 
-    assert!(matches!(Decoder::new().decode(&data), Err(Error::CrcMismatch { .. })));
+    assert!(matches!(
+        Decoder::new().decode(&data),
+        Err(Error::CrcMismatch { .. })
+    ));
     assert_eq!(
-        Decoder::with_options(lenient_options()).decode(&data).unwrap().data(),
+        Decoder::with_options(lenient_options())
+            .decode(&data)
+            .unwrap()
+            .data(),
         &[1, 2, 3, 4]
     );
 }
@@ -473,7 +576,9 @@ fn decode_checks_idat_crc_unless_turned_off() {
 
 #[test]
 fn decode_bitmap_rgba_1x1() {
-    let bitmap = Decoder::new().decode_bitmap(&rgba_1x1(), PixelFormat::Rgba8).unwrap();
+    let bitmap = Decoder::new()
+        .decode_bitmap(&rgba_1x1(), PixelFormat::Rgba8)
+        .unwrap();
 
     assert_eq!((bitmap.width(), bitmap.height()), (1, 1));
     assert_eq!(bitmap.format(), PixelFormat::Rgba8);
@@ -482,23 +587,38 @@ fn decode_bitmap_rgba_1x1() {
 
 #[test]
 fn decode_bitmap_rgb_drops_alpha() {
-    let bitmap = Decoder::new().decode_bitmap(&rgba_1x1(), PixelFormat::Rgb8).unwrap();
+    let bitmap = Decoder::new()
+        .decode_bitmap(&rgba_1x1(), PixelFormat::Rgb8)
+        .unwrap();
 
     assert_eq!(bitmap.data(), &[1, 2, 3]);
 }
 
 #[test]
 fn decode_bitmap_expands_gray() {
-    let data = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
-    let bitmap = Decoder::new().decode_bitmap(&data, PixelFormat::Rgb8).unwrap();
+    let data = png(
+        ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None),
+        &[1, 10, 5, 2, 1, 1],
+    );
+    let bitmap = Decoder::new()
+        .decode_bitmap(&data, PixelFormat::Rgb8)
+        .unwrap();
 
-    assert_eq!(bitmap.data(), &[10, 10, 10, 15, 15, 15, 11, 11, 11, 16, 16, 16]);
+    assert_eq!(
+        bitmap.data(),
+        &[10, 10, 10, 15, 15, 15, 11, 11, 11, 16, 16, 16]
+    );
 }
 
 #[test]
 fn decode_bitmap_of_interlaced_image() {
-    let data = png(ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7), &[0, 1, 0, 3, 0, 2, 1, 4, 1, 1]);
-    let bitmap = Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8).unwrap();
+    let data = png(
+        ihdr(3, 2, 8, ColorType::Grayscale, Interlace::Adam7),
+        &[0, 1, 0, 3, 0, 2, 1, 4, 1, 1],
+    );
+    let bitmap = Decoder::new()
+        .decode_bitmap(&data, PixelFormat::Rgba8)
+        .unwrap();
 
     let expected: Vec<u8> = (1..=6).flat_map(|v| [v, v, v, 255]).collect();
     assert_eq!(bitmap.data(), expected);
@@ -508,23 +628,47 @@ fn decode_bitmap_of_interlaced_image() {
 fn decode_bitmap_into_reuses_decoder_and_buffer() {
     let mut decoder = Decoder::new();
     let mut out = vec![0xEE; 64];
-    let gray = png(ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None), &[1, 10, 5, 2, 1, 1]);
+    let gray = png(
+        ihdr(2, 2, 8, ColorType::Grayscale, Interlace::None),
+        &[1, 10, 5, 2, 1, 1],
+    );
 
-    let header = decoder.decode_bitmap_into(&rgba_1x1(), PixelFormat::Rgba8, &mut out).unwrap();
+    let header = decoder
+        .decode_bitmap_into(&rgba_1x1(), PixelFormat::Rgba8, &mut out)
+        .unwrap();
     assert_eq!(header, rgba_1x1_header());
     assert_eq!(out, [1, 2, 3, 4]);
 
-    decoder.decode_bitmap_into(&gray, PixelFormat::Rgba8, &mut out).unwrap();
-    assert_eq!(out, [10, 10, 10, 255, 15, 15, 15, 255, 11, 11, 11, 255, 16, 16, 16, 255]);
+    decoder
+        .decode_bitmap_into(&gray, PixelFormat::Rgba8, &mut out)
+        .unwrap();
+    assert_eq!(
+        out,
+        [
+            10, 10, 10, 255, 15, 15, 15, 255, 11, 11, 11, 255, 16, 16, 16, 255
+        ]
+    );
 }
 
 #[test]
 fn decode_bitmap_still_works_after_a_failure() {
     let mut decoder = Decoder::new();
-    let broken = png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[9, 1, 2, 3, 4]);
+    let broken = png(
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        &[9, 1, 2, 3, 4],
+    );
 
-    assert_eq!(decoder.decode_bitmap(&broken, PixelFormat::Rgba8), Err(Error::InvalidFilterType(9)));
-    assert_eq!(decoder.decode_bitmap(&rgba_1x1(), PixelFormat::Rgba8).unwrap().data(), &[1, 2, 3, 4]);
+    assert_eq!(
+        decoder.decode_bitmap(&broken, PixelFormat::Rgba8),
+        Err(Error::InvalidFilterType(9))
+    );
+    assert_eq!(
+        decoder
+            .decode_bitmap(&rgba_1x1(), PixelFormat::Rgba8)
+            .unwrap()
+            .data(),
+        &[1, 2, 3, 4]
+    );
 }
 
 #[test]
@@ -554,14 +698,22 @@ fn decode_indexed_image_keeps_indices_and_palette() {
     let image = Decoder::new().decode(&indexed_3x1(&TWO_COLORS)).unwrap();
 
     assert_eq!(image.data(), &[0, 1, 0]);
-    assert_eq!(image.palette().unwrap().colors(), &[[10, 20, 30], [40, 50, 60]]);
+    assert_eq!(
+        image.palette().unwrap().colors(),
+        &[[10, 20, 30], [40, 50, 60]]
+    );
 }
 
 #[test]
 fn decode_bitmap_of_indexed_image_uses_the_palette() {
-    let bitmap = Decoder::new().decode_bitmap(&indexed_3x1(&TWO_COLORS), PixelFormat::Rgba8).unwrap();
+    let bitmap = Decoder::new()
+        .decode_bitmap(&indexed_3x1(&TWO_COLORS), PixelFormat::Rgba8)
+        .unwrap();
 
-    assert_eq!(bitmap.data(), &[10, 20, 30, 255, 40, 50, 60, 255, 10, 20, 30, 255]);
+    assert_eq!(
+        bitmap.data(),
+        &[10, 20, 30, 255, 40, 50, 60, 255, 10, 20, 30, 255]
+    );
 }
 
 #[test]
@@ -570,7 +722,9 @@ fn decoder_palette_is_the_last_images() {
     let mut pixels = Vec::new();
     assert_eq!(decoder.palette(), None);
 
-    decoder.decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels).unwrap();
+    decoder
+        .decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels)
+        .unwrap();
     assert_eq!(decoder.palette().map(|p| p.len()), Some(2));
 
     decoder.decode_into(&rgba_1x1(), &mut pixels).unwrap();
@@ -581,11 +735,15 @@ fn decoder_palette_is_the_last_images() {
 fn decoder_palette_is_cleared_by_a_failed_decode() {
     let mut decoder = Decoder::new();
     let mut pixels = Vec::new();
-    decoder.decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels).unwrap();
+    decoder
+        .decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels)
+        .unwrap();
 
     // One failure after the header, and one in it.
     for broken in [&rgba_1x1()[..40], &b"not a png"[..]] {
-        decoder.decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels).unwrap();
+        decoder
+            .decode_into(&indexed_3x1(&TWO_COLORS), &mut pixels)
+            .unwrap();
 
         assert!(decoder.decode_into(broken, &mut pixels).is_err());
         assert_eq!(decoder.palette(), None);
@@ -604,20 +762,32 @@ fn decode_rgb_image_keeps_its_suggested_palette() {
     let image = Decoder::new().decode(&data).unwrap();
     assert_eq!(image.palette().map(|p| p.len()), Some(1));
     // ...but it isn't used for converting
-    assert_eq!(image.to_bitmap(PixelFormat::Rgb8).unwrap().data(), &[7, 8, 9]);
+    assert_eq!(
+        image.to_bitmap(PixelFormat::Rgb8).unwrap().data(),
+        &[7, 8, 9]
+    );
 }
 
 #[test]
 fn decode_indexed_image_without_plte_fails() {
-    let data = png(ihdr(2, 1, 8, ColorType::Indexed, Interlace::None), &[0, 0, 1]);
+    let data = png(
+        ihdr(2, 1, 8, ColorType::Indexed, Interlace::None),
+        &[0, 0, 1],
+    );
 
     assert_eq!(Decoder::new().decode(&data), Err(Error::MissingPalette));
-    assert_eq!(Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8), Err(Error::MissingPalette));
+    assert_eq!(
+        Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8),
+        Err(Error::MissingPalette)
+    );
 }
 
 #[test]
 fn decode_rejects_invalid_plte() {
-    assert_eq!(Decoder::new().decode(&indexed_3x1(&[1, 2, 3, 4])), Err(Error::InvalidPaletteLength(4)));
+    assert_eq!(
+        Decoder::new().decode(&indexed_3x1(&[1, 2, 3, 4])),
+        Err(Error::InvalidPaletteLength(4))
+    );
 }
 
 #[test]
@@ -628,7 +798,10 @@ fn decode_bitmap_rejects_index_past_the_palette() {
     assert!(Decoder::new().decode(&data).is_ok());
     assert_eq!(
         Decoder::new().decode_bitmap(&data, PixelFormat::Rgb8),
-        Err(Error::PaletteIndexOutOfRange { index: 1, entries: 1 })
+        Err(Error::PaletteIndexOutOfRange {
+            index: 1,
+            entries: 1
+        })
     );
 }
 
@@ -654,7 +827,9 @@ fn decode_keeps_transparency() {
 
 #[test]
 fn decode_bitmap_applies_transparency() {
-    let bitmap = Decoder::new().decode_bitmap(&gray_2x1_with_key(), PixelFormat::Rgba8).unwrap();
+    let bitmap = Decoder::new()
+        .decode_bitmap(&gray_2x1_with_key(), PixelFormat::Rgba8)
+        .unwrap();
 
     assert_eq!(bitmap.data(), &[5, 5, 5, 0, 6, 6, 6, 255]);
 }
@@ -669,9 +844,14 @@ fn decode_bitmap_of_indexed_image_applies_palette_alpha() {
         chunk(b"IEND", b""),
     ]);
 
-    let bitmap = Decoder::new().decode_bitmap(&data, PixelFormat::Rgba8).unwrap();
+    let bitmap = Decoder::new()
+        .decode_bitmap(&data, PixelFormat::Rgba8)
+        .unwrap();
 
-    assert_eq!(bitmap.data(), &[10, 20, 30, 64, 40, 50, 60, 255, 10, 20, 30, 64]);
+    assert_eq!(
+        bitmap.data(),
+        &[10, 20, 30, 64, 40, 50, 60, 255, 10, 20, 30, 64]
+    );
 }
 
 #[test]
@@ -680,7 +860,9 @@ fn decoder_transparency_is_the_last_images() {
     let mut pixels = Vec::new();
     assert_eq!(decoder.transparency(), None);
 
-    decoder.decode_into(&gray_2x1_with_key(), &mut pixels).unwrap();
+    decoder
+        .decode_into(&gray_2x1_with_key(), &mut pixels)
+        .unwrap();
     assert_eq!(decoder.transparency(), Some(&Transparency::Gray(5)));
 
     decoder.decode_into(&rgba_1x1(), &mut pixels).unwrap();
@@ -693,7 +875,9 @@ fn decoder_transparency_is_cleared_by_a_failed_decode() {
     let mut pixels = Vec::new();
 
     for broken in [&rgba_1x1()[..40], &b"not a png"[..]] {
-        decoder.decode_into(&gray_2x1_with_key(), &mut pixels).unwrap();
+        decoder
+            .decode_into(&gray_2x1_with_key(), &mut pixels)
+            .unwrap();
 
         assert!(decoder.decode_into(broken, &mut pixels).is_err());
         assert_eq!(decoder.transparency(), None);
@@ -709,7 +893,10 @@ fn decode_rejects_invalid_trns() {
         chunk(b"IEND", b""),
     ]);
 
-    assert_eq!(Decoder::new().decode(&data), Err(Error::UnexpectedTransparency(ColorType::Rgba)));
+    assert_eq!(
+        Decoder::new().decode(&data),
+        Err(Error::UnexpectedTransparency(ColorType::Rgba))
+    );
 }
 
 // ---------- metadata and preserved chunks ----------
@@ -726,7 +913,11 @@ fn rgba_1x1_with_ancillary() -> Vec<u8> {
 }
 
 fn keep_everything() -> DecodeOptions {
-    DecodeOptions { preserve_chunks: true, preserve_metadata: true, ..DecodeOptions::default() }
+    DecodeOptions {
+        preserve_chunks: true,
+        preserve_metadata: true,
+        ..DecodeOptions::default()
+    }
 }
 
 #[test]
@@ -739,10 +930,16 @@ fn metadata_and_chunks_are_empty_by_default() {
 
 #[test]
 fn decode_keeps_metadata_and_chunks_when_asked() {
-    let image = Decoder::with_options(keep_everything()).decode(&rgba_1x1_with_ancillary()).unwrap();
+    let image = Decoder::with_options(keep_everything())
+        .decode(&rgba_1x1_with_ancillary())
+        .unwrap();
 
     assert_eq!(image.metadata().gamma().map(|g| g.scaled()), Some(45455));
-    let types: Vec<_> = image.ancillary_chunks().iter().map(|c| *c.chunk_type().as_bytes()).collect();
+    let types: Vec<_> = image
+        .ancillary_chunks()
+        .iter()
+        .map(|c| *c.chunk_type().as_bytes())
+        .collect();
     assert_eq!(types, [*b"gAMA", *b"ruSt"]);
     assert_eq!(image.ancillary_chunks()[1].data(), b"private");
 }
@@ -752,7 +949,9 @@ fn decoder_metadata_is_the_last_images() {
     let mut decoder = Decoder::with_options(keep_everything());
     let mut pixels = Vec::new();
 
-    decoder.decode_into(&rgba_1x1_with_ancillary(), &mut pixels).unwrap();
+    decoder
+        .decode_into(&rgba_1x1_with_ancillary(), &mut pixels)
+        .unwrap();
     assert!(decoder.metadata().gamma().is_some());
     assert_eq!(decoder.ancillary_chunks().len(), 2);
 
@@ -767,7 +966,9 @@ fn decoder_metadata_is_cleared_by_a_failed_decode() {
     let mut pixels = Vec::new();
 
     for broken in [&rgba_1x1()[..40], &b"not a png"[..]] {
-        decoder.decode_into(&rgba_1x1_with_ancillary(), &mut pixels).unwrap();
+        decoder
+            .decode_into(&rgba_1x1_with_ancillary(), &mut pixels)
+            .unwrap();
 
         assert!(decoder.decode_into(broken, &mut pixels).is_err());
         assert!(decoder.metadata().is_empty());
@@ -779,7 +980,9 @@ fn decoder_metadata_is_cleared_by_a_failed_decode() {
 fn decode_bitmap_keeps_metadata_too() {
     let mut decoder = Decoder::with_options(keep_everything());
 
-    decoder.decode_bitmap(&rgba_1x1_with_ancillary(), PixelFormat::Rgb8).unwrap();
+    decoder
+        .decode_bitmap(&rgba_1x1_with_ancillary(), PixelFormat::Rgb8)
+        .unwrap();
 
     assert!(decoder.metadata().gamma().is_some());
 }
@@ -792,10 +995,21 @@ fn strict_ancillary_fails_the_decode() {
         chunk(b"IDAT", &rust_deflate::compress_zlib(&[0, 1, 2, 3, 4])),
         chunk(b"IEND", b""),
     ]);
-    let strict = DecodeOptions { preserve_metadata: true, strict_ancillary: true, ..DecodeOptions::default() };
+    let strict = DecodeOptions {
+        preserve_metadata: true,
+        strict_ancillary: true,
+        ..DecodeOptions::default()
+    };
 
-    assert!(Decoder::with_options(keep_everything()).decode(&data).is_ok());
-    assert_eq!(Decoder::with_options(strict).decode(&data), Err(Error::InvalidChunkData(ChunkType::GAMA)));
+    assert!(
+        Decoder::with_options(keep_everything())
+            .decode(&data)
+            .is_ok()
+    );
+    assert_eq!(
+        Decoder::with_options(strict).decode(&data),
+        Err(Error::InvalidChunkData(ChunkType::GAMA))
+    );
 }
 
 // ---------- read_chunks ----------
@@ -821,8 +1035,15 @@ fn read_chunks_keeps_every_chunk_in_file_order() {
 
     let png = Decoder::new().read_chunks(&data).unwrap();
 
-    let types: Vec<_> = png.chunks().iter().map(|c| c.chunk_type().to_string()).collect();
-    assert_eq!(types, ["IHDR", "gAMA", "tEXt", "CuSt", "IDAT", "ruSt", "IEND"]);
+    let types: Vec<_> = png
+        .chunks()
+        .iter()
+        .map(|c| c.chunk_type().to_string())
+        .collect();
+    assert_eq!(
+        types,
+        ["IHDR", "gAMA", "tEXt", "CuSt", "IDAT", "ruSt", "IEND"]
+    );
     assert_eq!(png.chunks()[3].data(), b"custom critical");
 }
 
@@ -835,7 +1056,10 @@ fn read_chunks_parses_known_chunks() {
     assert_eq!(*png.header(), rgba_1x1_header());
     assert_eq!(png.metadata().gamma().map(|g| g.scaled()), Some(45455));
     let text = &png.metadata().text()[0];
-    assert_eq!((text.keyword.as_str(), text.text.as_str()), ("Title", "format-png"));
+    assert_eq!(
+        (text.keyword.as_str(), text.text.as_str()),
+        ("Title", "format-png")
+    );
 }
 
 #[test]
@@ -844,8 +1068,17 @@ fn read_chunks_lists_unknown_chunks_critical_or_not() {
 
     let png = Decoder::new().read_chunks(&data).unwrap();
 
-    let unknown: Vec<_> = png.unknown_chunks().map(|c| (c.chunk_type().to_string(), c.data())).collect();
-    assert_eq!(unknown, [("CuSt".to_string(), &b"custom critical"[..]), ("ruSt".to_string(), &b"private"[..])]);
+    let unknown: Vec<_> = png
+        .unknown_chunks()
+        .map(|c| (c.chunk_type().to_string(), c.data()))
+        .collect();
+    assert_eq!(
+        unknown,
+        [
+            ("CuSt".to_string(), &b"custom critical"[..]),
+            ("ruSt".to_string(), &b"private"[..])
+        ]
+    );
 }
 
 #[test]
@@ -853,7 +1086,10 @@ fn read_chunks_does_not_decompress_image_data() {
     let data = png_with_every_kind_of_chunk(b"not zlib");
 
     assert!(Decoder::new().read_chunks(&data).is_ok());
-    assert!(matches!(Decoder::new().decode(&data), Err(Error::Decompression(_))));
+    assert!(matches!(
+        Decoder::new().decode(&data),
+        Err(Error::Decompression(_))
+    ));
 }
 
 #[test]
@@ -862,19 +1098,37 @@ fn read_chunks_checks_chunk_order() {
     let header = ihdr(1, 1, 8, ColorType::Rgba, Interlace::None);
 
     let no_idat = png_of(&[header.clone(), chunk(b"IEND", b"")]);
-    assert_eq!(Decoder::new().read_chunks(&no_idat), Err(Error::MissingImageData));
+    assert_eq!(
+        Decoder::new().read_chunks(&no_idat),
+        Err(Error::MissingImageData)
+    );
 
-    let split = png_of(&[header.clone(), idat.clone(), chunk(b"ruSt", b""), idat.clone(), chunk(b"IEND", b"")]);
-    assert_eq!(Decoder::new().read_chunks(&split), Err(Error::NonConsecutiveImageData));
+    let split = png_of(&[
+        header.clone(),
+        idat.clone(),
+        chunk(b"ruSt", b""),
+        idat.clone(),
+        chunk(b"IEND", b""),
+    ]);
+    assert_eq!(
+        Decoder::new().read_chunks(&split),
+        Err(Error::NonConsecutiveImageData)
+    );
 
     let no_iend = png_of(&[header, idat]);
-    assert_eq!(Decoder::new().read_chunks(&no_iend), Err(Error::MissingImageEnd));
+    assert_eq!(
+        Decoder::new().read_chunks(&no_iend),
+        Err(Error::MissingImageEnd)
+    );
 }
 
 #[test]
 fn read_chunks_parses_metadata_whatever_preserve_metadata_says() {
     let data = png_with_every_kind_of_chunk(b"x");
-    let options = DecodeOptions { preserve_metadata: false, ..DecodeOptions::default() };
+    let options = DecodeOptions {
+        preserve_metadata: false,
+        ..DecodeOptions::default()
+    };
 
     let png = Decoder::with_options(options).read_chunks(&data).unwrap();
 
@@ -894,18 +1148,34 @@ fn read_chunks_skips_invalid_metadata_unless_strict() {
     assert_eq!(png.metadata().gamma(), None);
     assert_eq!(png.chunks_of_type(ChunkType::GAMA).count(), 1);
 
-    let strict = DecodeOptions { strict_ancillary: true, ..DecodeOptions::default() };
+    let strict = DecodeOptions {
+        strict_ancillary: true,
+        ..DecodeOptions::default()
+    };
     assert_eq!(
         Decoder::with_options(strict).read_chunks(&data),
-        Err(Error::InvalidChunkLength { chunk_type: ChunkType::GAMA, length: 3 })
+        Err(Error::InvalidChunkLength {
+            chunk_type: ChunkType::GAMA,
+            length: 3
+        })
     );
 }
 
 #[test]
 fn read_chunks_respects_validate_crc() {
     // Corrupts IEND's CRC: the last chunk read.
-    let data = with_corrupted_crc(&png(ihdr(1, 1, 8, ColorType::Rgba, Interlace::None), &[0, 1, 2, 3, 4]));
+    let data = with_corrupted_crc(&png(
+        ihdr(1, 1, 8, ColorType::Rgba, Interlace::None),
+        &[0, 1, 2, 3, 4],
+    ));
 
-    assert!(matches!(Decoder::new().read_chunks(&data), Err(Error::CrcMismatch { .. })));
-    assert!(Decoder::with_options(lenient_options()).read_chunks(&data).is_ok());
+    assert!(matches!(
+        Decoder::new().read_chunks(&data),
+        Err(Error::CrcMismatch { .. })
+    ));
+    assert!(
+        Decoder::with_options(lenient_options())
+            .read_chunks(&data)
+            .is_ok()
+    );
 }

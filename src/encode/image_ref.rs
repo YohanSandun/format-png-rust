@@ -30,12 +30,21 @@ pub struct ImageRef<'a> {
 
 impl<'a> ImageRef<'a> {
     /// An image with `header` and the pixels in `data`, and no other chunks.
+    #[must_use]
     pub fn new(header: ImageHeader, data: &'a [u8]) -> Self {
-        Self { header, data, palette: None, transparency: None, metadata: None, chunks: &[] }
+        Self {
+            header,
+            data,
+            palette: None,
+            transparency: None,
+            metadata: None,
+            chunks: &[],
+        }
     }
 
     /// Adds a `PLTE` chunk. Indexed images need one. RGB and RGBA images may
     /// have one, as a suggested palette; grayscale images must not.
+    #[must_use]
     pub fn with_palette(mut self, palette: &'a Palette) -> Self {
         self.palette = Some(palette);
         self
@@ -44,6 +53,7 @@ impl<'a> ImageRef<'a> {
     /// Adds a `tRNS` chunk: one fully transparent color for grayscale and RGB
     /// images, or an alpha value per palette entry for indexed images. Images
     /// with an alpha channel must not have one.
+    #[must_use]
     pub fn with_transparency(mut self, transparency: &'a Transparency) -> Self {
         self.transparency = Some(transparency);
         self
@@ -51,6 +61,7 @@ impl<'a> ImageRef<'a> {
 
     /// Adds the metadata chunks: color space, physical size, time, text, ICC
     /// profile and Exif; see [`Metadata`].
+    #[must_use]
     pub fn with_metadata(mut self, metadata: &'a Metadata) -> Self {
         self.metadata = Some(metadata);
         self
@@ -65,37 +76,44 @@ impl<'a> ImageRef<'a> {
     /// unless [`EncodeOptions::keep_unsafe_chunks`](crate::EncodeOptions::keep_unsafe_chunks)
     /// is set, and so are chunks of a type the encoder writes itself from the
     /// transparency or metadata.
+    #[must_use]
     pub fn with_chunks(mut self, chunks: &'a [OwnedChunk]) -> Self {
         self.chunks = chunks;
         self
     }
 
     /// The image's header.
+    #[must_use]
     pub fn header(&self) -> &ImageHeader {
         &self.header
     }
 
     /// The pixels, in the layout described above.
+    #[must_use]
     pub fn data(&self) -> &'a [u8] {
         self.data
     }
 
     /// The palette, if one was added.
+    #[must_use]
     pub fn palette(&self) -> Option<&'a Palette> {
         self.palette
     }
 
     /// The transparency, if it was added.
+    #[must_use]
     pub fn transparency(&self) -> Option<&'a Transparency> {
         self.transparency
     }
 
     /// The metadata, if it was added.
+    #[must_use]
     pub fn metadata(&self) -> Option<&'a Metadata> {
         self.metadata
     }
 
     /// The extra chunks, empty unless some were added.
+    #[must_use]
     pub fn chunks(&self) -> &'a [OwnedChunk] {
         self.chunks
     }

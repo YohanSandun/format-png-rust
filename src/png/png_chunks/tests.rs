@@ -8,7 +8,13 @@ fn chunk(chunk_type: &[u8; 4], data: &'static [u8]) -> Chunk<'static> {
 }
 
 fn png_chunks(chunks: Vec<Chunk<'static>>) -> PngChunks<'static> {
-    let header = ImageHeader { width: 1, height: 1, bit_depth: 8, color_type: ColorType::Rgb, interlace: Interlace::None };
+    let header = ImageHeader {
+        width: 1,
+        height: 1,
+        bit_depth: 8,
+        color_type: ColorType::Rgb,
+        interlace: Interlace::None,
+    };
     PngChunks::new(header, chunks, ImageChunks::default())
 }
 
@@ -53,7 +59,10 @@ fn chunks_of_type_keeps_file_order() {
         chunk(b"IEND", b""),
     ]);
 
-    let data: Vec<_> = png.chunks_of_type(ChunkType::from_bytes(*b"ruSt").unwrap()).map(|c| c.data()).collect();
+    let data: Vec<_> = png
+        .chunks_of_type(ChunkType::from_bytes(*b"ruSt").unwrap())
+        .map(|c| c.data())
+        .collect();
     assert_eq!(data, [b"1", b"2"]);
     assert_eq!(png.chunks_of_type(ChunkType::PLTE).count(), 0);
 }

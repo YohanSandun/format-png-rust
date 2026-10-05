@@ -4,7 +4,15 @@ use super::{ColorType, ImageHeader, Interlace};
 use crate::error::Error;
 
 /// Builds IHDR chunk data from its seven fields.
-fn ihdr(width: u32, height: u32, bit_depth: u8, color_type: u8, compression: u8, filter: u8, interlace: u8) -> Vec<u8> {
+fn ihdr(
+    width: u32,
+    height: u32,
+    bit_depth: u8,
+    color_type: u8,
+    compression: u8,
+    filter: u8,
+    interlace: u8,
+) -> Vec<u8> {
     let mut data = Vec::with_capacity(ImageHeader::LENGTH);
     data.extend_from_slice(&width.to_be_bytes());
     data.extend_from_slice(&height.to_be_bytes());
@@ -26,7 +34,10 @@ fn color_type_from_valid_values() {
 #[test]
 fn color_type_from_invalid_values_fails() {
     for value in [1, 5, 7, 255] {
-        assert_eq!(ColorType::try_from(value), Err(Error::InvalidColorType(value)));
+        assert_eq!(
+            ColorType::try_from(value),
+            Err(Error::InvalidColorType(value))
+        );
     }
 }
 
@@ -40,7 +51,10 @@ fn interlace_from_valid_values() {
 
 #[test]
 fn interlace_from_invalid_value_fails() {
-    assert_eq!(Interlace::try_from(2), Err(Error::InvalidInterlaceMethod(2)));
+    assert_eq!(
+        Interlace::try_from(2),
+        Err(Error::InvalidInterlaceMethod(2))
+    );
 }
 
 // ---------- parse: success ----------
@@ -95,7 +109,10 @@ fn parse_accepts_every_allowed_bit_depth() {
 fn parse_rejects_short_data() {
     let data = ihdr(1, 1, 8, 6, 0, 0, 0);
 
-    assert_eq!(ImageHeader::parse(&data[..12]), Err(Error::InvalidImageHeaderLength(12)));
+    assert_eq!(
+        ImageHeader::parse(&data[..12]),
+        Err(Error::InvalidImageHeaderLength(12))
+    );
 }
 
 #[test]
@@ -103,12 +120,18 @@ fn parse_rejects_long_data() {
     let mut data = ihdr(1, 1, 8, 6, 0, 0, 0);
     data.push(0);
 
-    assert_eq!(ImageHeader::parse(&data), Err(Error::InvalidImageHeaderLength(14)));
+    assert_eq!(
+        ImageHeader::parse(&data),
+        Err(Error::InvalidImageHeaderLength(14))
+    );
 }
 
 #[test]
 fn parse_rejects_empty_data() {
-    assert_eq!(ImageHeader::parse(&[]), Err(Error::InvalidImageHeaderLength(0)));
+    assert_eq!(
+        ImageHeader::parse(&[]),
+        Err(Error::InvalidImageHeaderLength(0))
+    );
 }
 
 // ---------- parse: dimensions ----------
@@ -117,7 +140,10 @@ fn parse_rejects_empty_data() {
 fn parse_rejects_zero_width() {
     assert_eq!(
         ImageHeader::parse(&ihdr(0, 1, 8, 6, 0, 0, 0)),
-        Err(Error::InvalidDimensions { width: 0, height: 1 })
+        Err(Error::InvalidDimensions {
+            width: 0,
+            height: 1
+        })
     );
 }
 
@@ -125,7 +151,10 @@ fn parse_rejects_zero_width() {
 fn parse_rejects_zero_height() {
     assert_eq!(
         ImageHeader::parse(&ihdr(1, 0, 8, 6, 0, 0, 0)),
-        Err(Error::InvalidDimensions { width: 1, height: 0 })
+        Err(Error::InvalidDimensions {
+            width: 1,
+            height: 0
+        })
     );
 }
 
@@ -133,11 +162,17 @@ fn parse_rejects_zero_height() {
 fn parse_rejects_dimensions_above_2_pow_31_minus_1() {
     assert_eq!(
         ImageHeader::parse(&ihdr(1 << 31, 1, 8, 6, 0, 0, 0)),
-        Err(Error::InvalidDimensions { width: 1 << 31, height: 1 })
+        Err(Error::InvalidDimensions {
+            width: 1 << 31,
+            height: 1
+        })
     );
     assert_eq!(
         ImageHeader::parse(&ihdr(1, u32::MAX, 8, 6, 0, 0, 0)),
-        Err(Error::InvalidDimensions { width: 1, height: u32::MAX })
+        Err(Error::InvalidDimensions {
+            width: 1,
+            height: u32::MAX
+        })
     );
 }
 
@@ -165,7 +200,10 @@ fn parse_rejects_disallowed_bit_depths() {
     for (color_type, bit_depth) in rejected {
         assert_eq!(
             ImageHeader::parse(&ihdr(1, 1, bit_depth, color_type as u8, 0, 0, 0)),
-            Err(Error::InvalidBitDepth { color_type, bit_depth }),
+            Err(Error::InvalidBitDepth {
+                color_type,
+                bit_depth
+            }),
         );
     }
 }
@@ -198,8 +236,20 @@ fn parse_rejects_unknown_interlace_method() {
 
 // ---------- sizes ----------
 
-fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType, interlace: Interlace) -> ImageHeader {
-    ImageHeader { width, height, bit_depth, color_type, interlace }
+fn header(
+    width: u32,
+    height: u32,
+    bit_depth: u8,
+    color_type: ColorType,
+    interlace: Interlace,
+) -> ImageHeader {
+    ImageHeader {
+        width,
+        height,
+        bit_depth,
+        color_type,
+        interlace,
+    }
 }
 
 #[test]
@@ -213,36 +263,90 @@ fn channels_per_color_type() {
 
 #[test]
 fn bits_per_pixel() {
-    assert_eq!(header(1, 1, 1, ColorType::Grayscale, Interlace::None).bits_per_pixel(), 1);
-    assert_eq!(header(1, 1, 4, ColorType::Indexed, Interlace::None).bits_per_pixel(), 4);
-    assert_eq!(header(1, 1, 8, ColorType::Rgb, Interlace::None).bits_per_pixel(), 24);
-    assert_eq!(header(1, 1, 16, ColorType::GrayscaleAlpha, Interlace::None).bits_per_pixel(), 32);
-    assert_eq!(header(1, 1, 16, ColorType::Rgba, Interlace::None).bits_per_pixel(), 64);
+    assert_eq!(
+        header(1, 1, 1, ColorType::Grayscale, Interlace::None).bits_per_pixel(),
+        1
+    );
+    assert_eq!(
+        header(1, 1, 4, ColorType::Indexed, Interlace::None).bits_per_pixel(),
+        4
+    );
+    assert_eq!(
+        header(1, 1, 8, ColorType::Rgb, Interlace::None).bits_per_pixel(),
+        24
+    );
+    assert_eq!(
+        header(1, 1, 16, ColorType::GrayscaleAlpha, Interlace::None).bits_per_pixel(),
+        32
+    );
+    assert_eq!(
+        header(1, 1, 16, ColorType::Rgba, Interlace::None).bits_per_pixel(),
+        64
+    );
 }
 
 #[test]
 fn filter_bpp_rounds_sub_byte_pixels_up_to_one() {
-    assert_eq!(header(1, 1, 1, ColorType::Grayscale, Interlace::None).filter_bpp(), 1);
-    assert_eq!(header(1, 1, 4, ColorType::Indexed, Interlace::None).filter_bpp(), 1);
-    assert_eq!(header(1, 1, 8, ColorType::Grayscale, Interlace::None).filter_bpp(), 1);
-    assert_eq!(header(1, 1, 16, ColorType::Grayscale, Interlace::None).filter_bpp(), 2);
-    assert_eq!(header(1, 1, 8, ColorType::Rgb, Interlace::None).filter_bpp(), 3);
-    assert_eq!(header(1, 1, 16, ColorType::Rgba, Interlace::None).filter_bpp(), 8);
+    assert_eq!(
+        header(1, 1, 1, ColorType::Grayscale, Interlace::None).filter_bpp(),
+        1
+    );
+    assert_eq!(
+        header(1, 1, 4, ColorType::Indexed, Interlace::None).filter_bpp(),
+        1
+    );
+    assert_eq!(
+        header(1, 1, 8, ColorType::Grayscale, Interlace::None).filter_bpp(),
+        1
+    );
+    assert_eq!(
+        header(1, 1, 16, ColorType::Grayscale, Interlace::None).filter_bpp(),
+        2
+    );
+    assert_eq!(
+        header(1, 1, 8, ColorType::Rgb, Interlace::None).filter_bpp(),
+        3
+    );
+    assert_eq!(
+        header(1, 1, 16, ColorType::Rgba, Interlace::None).filter_bpp(),
+        8
+    );
 }
 
 #[test]
 fn stride_pads_sub_byte_rows() {
-    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::None).stride(), Ok(2));
-    assert_eq!(header(13, 7, 2, ColorType::Grayscale, Interlace::None).stride(), Ok(4));
-    assert_eq!(header(16, 1, 1, ColorType::Grayscale, Interlace::None).stride(), Ok(2));
-    assert_eq!(header(17, 1, 4, ColorType::Indexed, Interlace::None).stride(), Ok(9));
+    assert_eq!(
+        header(13, 7, 1, ColorType::Grayscale, Interlace::None).stride(),
+        Ok(2)
+    );
+    assert_eq!(
+        header(13, 7, 2, ColorType::Grayscale, Interlace::None).stride(),
+        Ok(4)
+    );
+    assert_eq!(
+        header(16, 1, 1, ColorType::Grayscale, Interlace::None).stride(),
+        Ok(2)
+    );
+    assert_eq!(
+        header(17, 1, 4, ColorType::Indexed, Interlace::None).stride(),
+        Ok(9)
+    );
 }
 
 #[test]
 fn stride_of_whole_byte_pixels() {
-    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::None).stride(), Ok(52));
-    assert_eq!(header(13, 7, 16, ColorType::Rgb, Interlace::None).stride(), Ok(78));
-    assert_eq!(header(13, 7, 16, ColorType::Rgba, Interlace::None).stride(), Ok(104));
+    assert_eq!(
+        header(13, 7, 8, ColorType::Rgba, Interlace::None).stride(),
+        Ok(52)
+    );
+    assert_eq!(
+        header(13, 7, 16, ColorType::Rgb, Interlace::None).stride(),
+        Ok(78)
+    );
+    assert_eq!(
+        header(13, 7, 16, ColorType::Rgba, Interlace::None).stride(),
+        Ok(104)
+    );
 }
 
 #[test]
@@ -256,30 +360,63 @@ fn row_bytes_for_narrower_rows() {
 
 #[test]
 fn image_size_is_stride_times_height() {
-    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::None).image_size(), Ok(364));
-    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::None).image_size(), Ok(14));
-    assert_eq!(header(1, 1, 8, ColorType::Rgba, Interlace::Adam7).image_size(), Ok(4));
+    assert_eq!(
+        header(13, 7, 8, ColorType::Rgba, Interlace::None).image_size(),
+        Ok(364)
+    );
+    assert_eq!(
+        header(13, 7, 1, ColorType::Grayscale, Interlace::None).image_size(),
+        Ok(14)
+    );
+    assert_eq!(
+        header(1, 1, 8, ColorType::Rgba, Interlace::Adam7).image_size(),
+        Ok(4)
+    );
 }
 
 #[test]
 fn scanline_size_adds_a_filter_byte_per_row() {
-    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::None).scanline_size(), Ok(371));
-    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::None).scanline_size(), Ok(21));
-    assert_eq!(header(13, 7, 16, ColorType::Rgb, Interlace::None).scanline_size(), Ok(553));
+    assert_eq!(
+        header(13, 7, 8, ColorType::Rgba, Interlace::None).scanline_size(),
+        Ok(371)
+    );
+    assert_eq!(
+        header(13, 7, 1, ColorType::Grayscale, Interlace::None).scanline_size(),
+        Ok(21)
+    );
+    assert_eq!(
+        header(13, 7, 16, ColorType::Rgb, Interlace::None).scanline_size(),
+        Ok(553)
+    );
 }
 
 #[test]
 fn scanline_size_counts_every_non_empty_adam7_pass() {
-    assert_eq!(header(13, 7, 8, ColorType::Rgba, Interlace::Adam7).scanline_size(), Ok(378));
-    assert_eq!(header(13, 7, 1, ColorType::Grayscale, Interlace::Adam7).scanline_size(), Ok(31));
-    assert_eq!(header(13, 7, 2, ColorType::Grayscale, Interlace::Adam7).scanline_size(), Ok(43));
-    assert_eq!(header(13, 7, 16, ColorType::Rgba, Interlace::Adam7).scanline_size(), Ok(742));
+    assert_eq!(
+        header(13, 7, 8, ColorType::Rgba, Interlace::Adam7).scanline_size(),
+        Ok(378)
+    );
+    assert_eq!(
+        header(13, 7, 1, ColorType::Grayscale, Interlace::Adam7).scanline_size(),
+        Ok(31)
+    );
+    assert_eq!(
+        header(13, 7, 2, ColorType::Grayscale, Interlace::Adam7).scanline_size(),
+        Ok(43)
+    );
+    assert_eq!(
+        header(13, 7, 16, ColorType::Rgba, Interlace::Adam7).scanline_size(),
+        Ok(742)
+    );
 }
 
 #[test]
 fn scanline_size_skips_empty_adam7_passes() {
     // only the first pass has pixels: one row of one pixel plus its filter byte
-    assert_eq!(header(1, 1, 8, ColorType::Rgba, Interlace::Adam7).scanline_size(), Ok(5));
+    assert_eq!(
+        header(1, 1, 8, ColorType::Rgba, Interlace::Adam7).scanline_size(),
+        Ok(5)
+    );
 }
 
 #[test]

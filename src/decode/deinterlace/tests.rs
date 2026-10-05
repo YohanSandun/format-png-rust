@@ -5,7 +5,13 @@ use crate::png::adam7::{PASSES, Pass};
 use crate::png::{ColorType, ImageHeader, Interlace};
 
 fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType) -> ImageHeader {
-    ImageHeader { width, height, bit_depth, color_type, interlace: Interlace::Adam7 }
+    ImageHeader {
+        width,
+        height,
+        bit_depth,
+        color_type,
+        interlace: Interlace::Adam7,
+    }
 }
 
 /// Bits per pixel and bytes per row, computed here so these tests don't depend
@@ -46,7 +52,11 @@ fn set_pixel(data: &mut [u8], row_bytes: usize, bits: usize, x: usize, y: usize,
 fn full_image(header: &ImageHeader) -> Vec<u8> {
     let (bits, stride) = layout(header, header.width);
     let mut data = vec![0; stride * header.height as usize];
-    let mask = if bits == 64 { u64::MAX } else { (1 << bits) - 1 };
+    let mask = if bits == 64 {
+        u64::MAX
+    } else {
+        (1 << bits) - 1
+    };
     for y in 0..header.height as usize {
         for x in 0..header.width as usize {
             let value = (x as u64 * 0x9E37_79B9 + y as u64 * 0x85EB_CA6B + 1) & mask;
@@ -66,7 +76,14 @@ fn extract_pass(header: &ImageHeader, pass: &Pass, full: &[u8]) -> Vec<u8> {
         for px in 0..width {
             let x = pass.x_start as usize + px * pass.x_step as usize;
             let y = pass.y_start as usize + py * pass.y_step as usize;
-            set_pixel(&mut data, row_bytes, bits, px, py, get_pixel(full, stride, bits, x, y));
+            set_pixel(
+                &mut data,
+                row_bytes,
+                bits,
+                px,
+                py,
+                get_pixel(full, stride, bits, x, y),
+            );
         }
     }
     data
@@ -74,7 +91,11 @@ fn extract_pass(header: &ImageHeader, pass: &Pass, full: &[u8]) -> Vec<u8> {
 
 fn pass_size(header: &ImageHeader, pass: &Pass) -> (usize, usize) {
     let count = |size: u32, start: u32, step: u32| {
-        if size > start { ((size - start).div_ceil(step)) as usize } else { 0 }
+        if size > start {
+            ((size - start).div_ceil(step)) as usize
+        } else {
+            0
+        }
     };
     (
         count(header.width, pass.x_start, pass.x_step),

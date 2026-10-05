@@ -78,77 +78,91 @@ pub struct Metadata {
 
 impl Metadata {
     /// The `gAMA` chunk: the image's gamma.
+    #[must_use]
     pub fn gamma(&self) -> Option<Gamma> {
         self.gamma
     }
 
     /// The `cHRM` chunk: the chromaticities of the image's primaries and white point.
+    #[must_use]
     pub fn chromaticities(&self) -> Option<Chromaticities> {
         self.chromaticities
     }
 
     /// The `sRGB` chunk: the image is in the sRGB color space, with this rendering intent.
+    #[must_use]
     pub fn srgb(&self) -> Option<RenderingIntent> {
         self.srgb
     }
 
     /// The `pHYs` chunk: the intended pixel size or aspect ratio.
+    #[must_use]
     pub fn physical_dimensions(&self) -> Option<PhysicalDimensions> {
         self.physical_dimensions
     }
 
     /// The `tIME` chunk: when the image was last modified.
+    #[must_use]
     pub fn time(&self) -> Option<Time> {
         self.time
     }
 
     /// The `tEXt`, `zTXt` and `iTXt` chunks, in file order. A keyword may appear
     /// more than once.
+    #[must_use]
     pub fn text(&self) -> &[Text] {
         &self.text
     }
 
     /// The `iCCP` chunk: the image's embedded ICC color profile.
+    #[must_use]
     pub fn icc_profile(&self) -> Option<&IccProfile> {
         self.icc_profile.as_ref()
     }
 
     /// The `cICP` chunk: the image's color space as coding-independent code
     /// points. Takes precedence over every other color chunk.
+    #[must_use]
     pub fn cicp(&self) -> Option<CodingIndependentCodePoints> {
         self.cicp
     }
 
     /// The `eXIf` chunk: the image's Exif metadata, raw.
+    #[must_use]
     pub fn exif(&self) -> Option<&Exif> {
         self.exif.as_ref()
     }
 
     /// Sets the `gAMA` chunk.
+    #[must_use]
     pub fn with_gamma(mut self, gamma: Gamma) -> Self {
         self.gamma = Some(gamma);
         self
     }
 
     /// Sets the `cHRM` chunk.
+    #[must_use]
     pub fn with_chromaticities(mut self, chromaticities: Chromaticities) -> Self {
         self.chromaticities = Some(chromaticities);
         self
     }
 
     /// Sets the `sRGB` chunk.
+    #[must_use]
     pub fn with_srgb(mut self, intent: RenderingIntent) -> Self {
         self.srgb = Some(intent);
         self
     }
 
     /// Sets the `pHYs` chunk.
+    #[must_use]
     pub fn with_physical_dimensions(mut self, dimensions: PhysicalDimensions) -> Self {
         self.physical_dimensions = Some(dimensions);
         self
     }
 
     /// Sets the `tIME` chunk.
+    #[must_use]
     pub fn with_time(mut self, time: Time) -> Self {
         self.time = Some(time);
         self
@@ -156,30 +170,35 @@ impl Metadata {
 
     /// Adds a `tEXt`, `zTXt` or `iTXt` chunk, after any added before; which one
     /// is written depends on its [`TextKind`]. A keyword may be used more than once.
+    #[must_use]
     pub fn with_text(mut self, text: Text) -> Self {
         self.text.push(text);
         self
     }
 
     /// Sets the `iCCP` chunk.
+    #[must_use]
     pub fn with_icc_profile(mut self, icc_profile: IccProfile) -> Self {
         self.icc_profile = Some(icc_profile);
         self
     }
 
     /// Sets the `cICP` chunk.
+    #[must_use]
     pub fn with_cicp(mut self, cicp: CodingIndependentCodePoints) -> Self {
         self.cicp = Some(cicp);
         self
     }
 
     /// Sets the `eXIf` chunk.
+    #[must_use]
     pub fn with_exif(mut self, exif: Exif) -> Self {
         self.exif = Some(exif);
         self
     }
 
     /// Whether no known chunk was found.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }

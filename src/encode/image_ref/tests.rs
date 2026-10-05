@@ -2,10 +2,19 @@
 
 use super::ImageRef;
 use crate::png::metadata::{Text, TextKind};
-use crate::png::{ChunkPosition, ChunkType, ColorType, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, Transparency};
+use crate::png::{
+    ChunkPosition, ChunkType, ColorType, ImageHeader, Interlace, Metadata, OwnedChunk, Palette,
+    Transparency,
+};
 
 fn header(color_type: ColorType) -> ImageHeader {
-    ImageHeader { width: 2, height: 1, bit_depth: 8, color_type, interlace: Interlace::None }
+    ImageHeader {
+        width: 2,
+        height: 1,
+        bit_depth: 8,
+        color_type,
+        interlace: Interlace::None,
+    }
 }
 
 #[test]
@@ -29,7 +38,11 @@ fn with_palette_adds_it() {
 
 #[test]
 fn from_image_keeps_header_pixels_and_palette() {
-    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/indexed_4.png")).unwrap();
+    let data = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/valid/indexed_4.png"
+    ))
+    .unwrap();
     let image = crate::decode(&data).unwrap();
 
     let image_ref = ImageRef::from(&image);
@@ -41,7 +54,10 @@ fn from_image_keeps_header_pixels_and_palette() {
 
 #[test]
 fn new_has_no_transparency() {
-    assert_eq!(ImageRef::new(header(ColorType::Rgb), &[0; 6]).transparency(), None);
+    assert_eq!(
+        ImageRef::new(header(ColorType::Rgb), &[0; 6]).transparency(),
+        None
+    );
 }
 
 #[test]
@@ -56,7 +72,11 @@ fn with_transparency_adds_it() {
 #[test]
 fn from_image_keeps_transparency() {
     for name in ["gray_8_trns.png", "rgb_16_trns.png", "indexed_2_trns.png"] {
-        let data = std::fs::read(format!("{}/tests/data/valid/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let data = std::fs::read(format!(
+            "{}/tests/data/valid/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
         let image = crate::decode(&data).unwrap();
 
         let image_ref = ImageRef::from(&image);
@@ -68,7 +88,10 @@ fn from_image_keeps_transparency() {
 
 #[test]
 fn new_has_no_metadata() {
-    assert_eq!(ImageRef::new(header(ColorType::Rgb), &[0; 6]).metadata(), None);
+    assert_eq!(
+        ImageRef::new(header(ColorType::Rgb), &[0; 6]).metadata(),
+        None
+    );
 }
 
 #[test]
@@ -89,8 +112,15 @@ fn with_metadata_adds_it() {
 
 #[test]
 fn from_image_keeps_metadata_when_it_was_decoded() {
-    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/metadata.png")).unwrap();
-    let options = crate::DecodeOptions { preserve_metadata: true, ..crate::DecodeOptions::default() };
+    let data = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/valid/metadata.png"
+    ))
+    .unwrap();
+    let options = crate::DecodeOptions {
+        preserve_metadata: true,
+        ..crate::DecodeOptions::default()
+    };
 
     let with = crate::Decoder::with_options(options).decode(&data).unwrap();
     let without = crate::decode(&data).unwrap();
@@ -102,12 +132,20 @@ fn from_image_keeps_metadata_when_it_was_decoded() {
 
 #[test]
 fn new_has_no_extra_chunks() {
-    assert!(ImageRef::new(header(ColorType::Rgb), &[0; 6]).chunks().is_empty());
+    assert!(
+        ImageRef::new(header(ColorType::Rgb), &[0; 6])
+            .chunks()
+            .is_empty()
+    );
 }
 
 #[test]
 fn with_chunks_adds_them() {
-    let chunks = [OwnedChunk::from_data(ChunkType::from_bytes(*b"myAp").unwrap(), b"settings".to_vec(), ChunkPosition::AfterImageData)];
+    let chunks = [OwnedChunk::from_data(
+        ChunkType::from_bytes(*b"myAp").unwrap(),
+        b"settings".to_vec(),
+        ChunkPosition::AfterImageData,
+    )];
 
     let image = ImageRef::new(header(ColorType::Rgb), &[0; 6]).with_chunks(&chunks);
 
@@ -116,8 +154,15 @@ fn with_chunks_adds_them() {
 
 #[test]
 fn from_image_keeps_preserved_chunks() {
-    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/ancillary_chunks.png")).unwrap();
-    let options = crate::DecodeOptions { preserve_chunks: true, ..crate::DecodeOptions::default() };
+    let data = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/valid/ancillary_chunks.png"
+    ))
+    .unwrap();
+    let options = crate::DecodeOptions {
+        preserve_chunks: true,
+        ..crate::DecodeOptions::default()
+    };
 
     let with = crate::Decoder::with_options(options).decode(&data).unwrap();
     let without = crate::decode(&data).unwrap();

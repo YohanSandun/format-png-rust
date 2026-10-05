@@ -41,7 +41,11 @@ impl Transparency {
     ///   6 for RGB, or is 0 for an indexed image.
     /// - `Error::TooManyTransparencyEntries` if an indexed image's `tRNS` has more
     ///   entries than its palette.
-    pub(crate) fn parse(data: &[u8], header: &ImageHeader, palette: Option<&Palette>) -> Result<Self, Error> {
+    pub(crate) fn parse(
+        data: &[u8],
+        header: &ImageHeader,
+        palette: Option<&Palette>,
+    ) -> Result<Self, Error> {
         // Reads 2-byte value number `i` of `data`, keeping only the bits of the
         // bit depth. Shifting a u32 lets this work for 16-bit too.
         let value = |i: usize| -> u16 {
@@ -50,29 +54,43 @@ impl Transparency {
         };
 
         match header.color_type {
-            ColorType::GrayscaleAlpha | ColorType::Rgba => Err(Error::UnexpectedTransparency(header.color_type)),
+            ColorType::GrayscaleAlpha | ColorType::Rgba => {
+                Err(Error::UnexpectedTransparency(header.color_type))
+            }
             ColorType::Indexed => {
                 if let Some(palette) = palette {
                     if data.is_empty() {
-                        return Err(Error::InvalidTransparencyLength { color_type: header.color_type, length: data.len() });
+                        return Err(Error::InvalidTransparencyLength {
+                            color_type: header.color_type,
+                            length: data.len(),
+                        });
                     } else if palette.len() < data.len() {
-                        return Err(Error::TooManyTransparencyEntries { entries: data.len(), palette_entries: palette.len() });
+                        return Err(Error::TooManyTransparencyEntries {
+                            entries: data.len(),
+                            palette_entries: palette.len(),
+                        });
                     }
                     Ok(Self::Palette(PaletteAlpha::new(data)))
                 } else {
                     Err(Error::TransparencyBeforePalette)
                 }
-            },
+            }
             ColorType::Grayscale => {
                 if data.len() != 2 {
-                    Err(Error::InvalidTransparencyLength { color_type: header.color_type, length: data.len() })
+                    Err(Error::InvalidTransparencyLength {
+                        color_type: header.color_type,
+                        length: data.len(),
+                    })
                 } else {
                     Ok(Self::Gray(value(0)))
                 }
-            },
+            }
             ColorType::Rgb => {
                 if data.len() != 6 {
-                    Err(Error::InvalidTransparencyLength { color_type: header.color_type, length: data.len() })
+                    Err(Error::InvalidTransparencyLength {
+                        color_type: header.color_type,
+                        length: data.len(),
+                    })
                 } else {
                     Ok(Self::Rgb([value(0), value(1), value(2)]))
                 }
@@ -99,7 +117,10 @@ impl PaletteAlpha {
         debug_assert!((1..=MAX_ENTRIES).contains(&values.len()));
         let mut alpha = [255; MAX_ENTRIES];
         alpha[..values.len()].copy_from_slice(values);
-        Self { alpha, len: values.len() }
+        Self {
+            alpha,
+            len: values.len(),
+        }
     }
 
     /// Creates alpha values for a palette, in index order, for encoding an
@@ -120,30 +141,37 @@ impl PaletteAlpha {
     /// values or more than 256.
     pub fn from_values(values: &[u8]) -> Result<Self, Error> {
         if values.is_empty() || values.len() > MAX_ENTRIES {
-            return Err(Error::InvalidTransparencyLength { color_type: ColorType::Indexed, length: values.len() });
+            return Err(Error::InvalidTransparencyLength {
+                color_type: ColorType::Indexed,
+                length: values.len(),
+            });
         }
         Ok(Self::new(values))
     }
 
     /// The alpha values in the chunk, one per palette entry from index 0. There
     /// may be fewer than the palette has entries.
+    #[must_use]
     pub fn values(&self) -> &[u8] {
         &self.alpha[..self.len]
     }
 
     /// The number of alpha values in the chunk, 1 to 256. May be less than
     /// the palette has entries.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Always `false`: the chunk has at least one value.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// The alpha of palette entry `index`: its value from the chunk, or 255 past
     /// the end of it.
+    #[must_use]
     pub fn get(&self, index: u8) -> u8 {
         self.alpha[usize::from(index)]
     }

@@ -14,7 +14,10 @@ impl Gamma {
     /// - [`Error::InvalidChunkData`] if the value is 0, which isn't a valid gamma.
     pub fn parse(data: &[u8]) -> Result<Self, Error> {
         if data.len() != 4 {
-            return Err(Error::InvalidChunkLength { chunk_type: ChunkType::GAMA, length: data.len() });
+            return Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::GAMA,
+                length: data.len(),
+            });
         }
 
         let value = u32::from_be_bytes(data[..4].try_into().unwrap());
@@ -46,11 +49,13 @@ impl Gamma {
     }
 
     /// The value as stored: the gamma times 100000. 45455 means 1/2.2.
+    #[must_use]
     pub fn scaled(&self) -> u32 {
         self.0
     }
 
     /// The gamma, for example 0.45455.
+    #[must_use]
     pub fn value(&self) -> f64 {
         f64::from(self.0) / 100_000.0
     }
@@ -88,7 +93,10 @@ impl Chromaticities {
     /// [`Error::InvalidChunkLength`] if `data` isn't 32 bytes.
     pub fn parse(data: &[u8]) -> Result<Self, Error> {
         if data.len() != 32 {
-            return Err(Error::InvalidChunkLength { chunk_type: ChunkType::CHRM, length: data.len() });
+            return Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::CHRM,
+                length: data.len(),
+            });
         }
 
         Ok(Self {
@@ -129,7 +137,10 @@ impl RenderingIntent {
     /// - [`Error::InvalidChunkData`] if the byte is above 3.
     pub fn parse(data: &[u8]) -> Result<Self, Error> {
         if data.len() != 1 {
-            return Err(Error::InvalidChunkLength { chunk_type: ChunkType::SRGB, length: data.len() });
+            return Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::SRGB,
+                length: data.len(),
+            });
         }
 
         Ok(match data[0] {

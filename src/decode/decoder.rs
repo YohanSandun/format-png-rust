@@ -1,14 +1,14 @@
 use super::chunk_reader::ChunkReader;
 use super::options::DecodeOptions;
+use crate::convert::{Source, convert, is_unchanged};
 use crate::decode::deinterlace::deinterlace_pass;
 use crate::decode::image_data::{collect_image_data, read_image_chunks};
 use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
-use crate::convert::{Source, convert, is_unchanged};
 use crate::png::{
-    Bitmap, Chunk, ChunkType, Image, ImageChunks, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PixelFormat,
-    PngChunks, Transparency,
+    Bitmap, Chunk, ChunkType, Image, ImageChunks, ImageHeader, Interlace, Metadata, OwnedChunk,
+    Palette, PixelFormat, PngChunks, Transparency,
 };
 use rust_deflate::{Decompressor, OutputOptions};
 
@@ -53,17 +53,20 @@ pub struct Decoder {
 
 impl Decoder {
     /// Creates a decoder with [`DecodeOptions::default`].
+    #[must_use]
     pub fn new() -> Self {
         Self::with_options(DecodeOptions::default())
     }
 
     /// Creates a decoder with the given options.
+    #[must_use]
     pub fn with_options(options: DecodeOptions) -> Self {
         Self::with_decompressor(options, Decompressor::new())
     }
 
     /// Creates a decoder that uses an existing [`Decompressor`], for example one taken
     /// from another decoder with [`into_decompressor`](Self::into_decompressor).
+    #[must_use]
     pub fn with_decompressor(options: DecodeOptions, decompressor: Decompressor) -> Self {
         Self {
             options,
@@ -77,6 +80,7 @@ impl Decoder {
     }
 
     /// The options this decoder was created with.
+    #[must_use]
     pub fn options(&self) -> &DecodeOptions {
         &self.options
     }
@@ -84,12 +88,14 @@ impl Decoder {
     /// The `PLTE` palette of the last image decoded with [`decode_into`](Self::decode_into)
     /// or another decode method, or `None` if it had none or decoding failed.
     /// Indexed images always have one; see [`Image::palette`].
+    #[must_use]
     pub fn palette(&self) -> Option<&Palette> {
         self.chunks.palette.as_ref()
     }
 
     /// The `tRNS` transparency of the last image decoded, like [`palette`](Self::palette);
     /// see [`Image::transparency`].
+    #[must_use]
     pub fn transparency(&self) -> Option<&Transparency> {
         self.chunks.transparency.as_ref()
     }
@@ -97,6 +103,7 @@ impl Decoder {
     /// The known ancillary chunks of the last image decoded, like
     /// [`palette`](Self::palette). Empty unless
     /// [`DecodeOptions::preserve_metadata`] is set; see [`Image::metadata`].
+    #[must_use]
     pub fn metadata(&self) -> &Metadata {
         &self.chunks.metadata
     }
@@ -104,11 +111,13 @@ impl Decoder {
     /// Raw copies of the ancillary chunks of the last image decoded, like
     /// [`palette`](Self::palette). Empty unless
     /// [`DecodeOptions::preserve_chunks`] is set; see [`Image::ancillary_chunks`].
+    #[must_use]
     pub fn ancillary_chunks(&self) -> &[OwnedChunk] {
         &self.chunks.ancillary
     }
 
     /// Consumes the decoder and returns its decompressor, to reuse elsewhere.
+    #[must_use]
     pub fn into_decompressor(self) -> Decompressor {
         self.decompressor
     }
@@ -142,7 +151,9 @@ impl Decoder {
     }
 
     /// Like `read_image_header`, but also returns the raw `IHDR` chunk.
-    fn read_image_header_chunk<'a>(chunks: &mut ChunkReader<'a>) -> Result<(ImageHeader, Chunk<'a>), Error> {
+    fn read_image_header_chunk<'a>(
+        chunks: &mut ChunkReader<'a>,
+    ) -> Result<(ImageHeader, Chunk<'a>), Error> {
         match chunks.next_chunk()? {
             Some(chunk) if chunk.chunk_type() == ChunkType::IHDR => {
                 Ok((ImageHeader::parse(chunk.data())?, chunk))
@@ -185,9 +196,19 @@ impl Decoder {
         let mut chunks = self.chunks(data)?;
         let (header, header_chunk) = Self::read_image_header_chunk(&mut chunks)?;
 
-        let options = DecodeOptions { preserve_metadata: true, preserve_chunks: false, ..self.options.clone() };
+        let options = DecodeOptions {
+            preserve_metadata: true,
+            preserve_chunks: false,
+            ..self.options.clone()
+        };
         let mut all = vec![header_chunk];
-        let found = read_image_chunks(&mut chunks, &header, &options, &mut self.decompressor, |chunk| all.push(chunk))?;
+        let found = read_image_chunks(
+            &mut chunks,
+            &header,
+            &options,
+            &mut self.decompressor,
+            |chunk| all.push(chunk),
+        )?;
 
         Ok(PngChunks::new(header, all, found))
     }
@@ -200,7 +221,12 @@ impl Decoder {
     pub fn decode(&mut self, data: &[u8]) -> Result<Image, Error> {
         let mut pixels = Vec::new();
         let header = self.decode_into(data, &mut pixels)?;
-        Ok(Image::new(header, header.stride()?, pixels, self.chunks.clone()))
+        Ok(Image::new(
+            header,
+            header.stride()?,
+            pixels,
+            self.chunks.clone(),
+        ))
     }
 
     /// Like [`decode`](Self::decode), but writes the pixels to `out` and returns
@@ -247,7 +273,13 @@ impl Decoder {
         let scanline_size = header.scanline_size()?;
 
         self.compressed.clear();
-        let found = collect_image_data(&mut chunks, &header, &self.options, &mut self.decompressor, &mut self.compressed)?;
+        let found = collect_image_data(
+            &mut chunks,
+            &header,
+            &self.options,
+            &mut self.decompressor,
+            &mut self.compressed,
+        )?;
 
         // The decompressor appends, so clear what the previous image left here.
         self.scanlines.clear();
@@ -259,19 +291,26 @@ impl Decoder {
                 OutputOptions::exact(scanline_size),
             )
             .map_err(|e| match e {
-                rust_deflate::Error::OutputLimitExceeded => Error::ImageDataTooLong { expected: scanline_size },
-                _ => Error::Decompression(e)
+                rust_deflate::Error::OutputLimitExceeded => Error::ImageDataTooLong {
+                    expected: scanline_size,
+                },
+                _ => Error::Decompression(e),
             })?;
 
         if output_size < scanline_size {
-            return Err(Error::ImageDataTooShort { expected: scanline_size, actual: output_size });
+            return Err(Error::ImageDataTooShort {
+                expected: scanline_size,
+                actual: output_size,
+            });
         }
 
         out.clear();
         out.resize(header.image_size()?, 0);
 
         match header.interlace {
-            Interlace::None => unfilter(&self.scanlines, header.stride()?, header.filter_bpp(), out)?,
+            Interlace::None => {
+                unfilter(&self.scanlines, header.stride()?, header.filter_bpp(), out)?
+            }
             Interlace::Adam7 => self.unfilter_adam7(&header, out)?,
         }
 
@@ -310,7 +349,12 @@ impl Decoder {
     /// - Any error from [`decode_into`](Self::decode_into).
     /// - Any error from [`Image::to_bitmap`], such as [`Error::PaletteIndexOutOfRange`]
     ///   for indexed images.
-    pub fn decode_bitmap_into(&mut self, data: &[u8], format: PixelFormat, out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
+    pub fn decode_bitmap_into(
+        &mut self,
+        data: &[u8],
+        format: PixelFormat,
+        out: &mut Vec<u8>,
+    ) -> Result<ImageHeader, Error> {
         // 8-bit RGB or RGBA already has the bitmap's layout, so decode straight into `out`.
         if is_unchanged(&self.read_header(data)?, format) {
             return self.decode_into(data, out);
@@ -353,7 +397,12 @@ impl Decoder {
             self.pass.clear();
             self.pass.resize(row_bytes * height as usize, 0);
 
-            unfilter(&self.scanlines[offset..offset + size], row_bytes, bpp, &mut self.pass)?;
+            unfilter(
+                &self.scanlines[offset..offset + size],
+                row_bytes,
+                bpp,
+                &mut self.pass,
+            )?;
             deinterlace_pass(header, pass, &self.pass, out);
             offset += size;
         }

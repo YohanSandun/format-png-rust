@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::io::ByteReader;
-use crate::png::{Chunk, ChunkType, SIGNATURE};
 use crate::png::crc::crc32;
+use crate::png::{Chunk, ChunkType, SIGNATURE};
 
 const MAX_CHUNK_SIZE: u32 = 2_147_483_647;
 
@@ -56,7 +56,7 @@ impl<'a> ChunkReader<'a> {
         })?;
 
         if signature != SIGNATURE {
-            return Err(Error::InvalidSignature)
+            return Err(Error::InvalidSignature);
         }
 
         Ok(Self {
@@ -68,6 +68,7 @@ impl<'a> ChunkReader<'a> {
     /// Turns CRC validation on or off for the chunks read after this call.
     ///
     /// With it off, [`Chunk::crc`] still returns the stored CRC, unchecked.
+    #[must_use]
     pub fn validate_crc(mut self, enabled: bool) -> Self {
         self.validate_crc = enabled;
         self
@@ -86,7 +87,7 @@ impl<'a> ChunkReader<'a> {
     /// - [`Error::CrcMismatch`] if CRC validation is on and the CRC is wrong.
     pub fn next_chunk(&mut self) -> Result<Option<Chunk<'a>>, Error> {
         if self.reader.is_empty() {
-            return Ok(None)
+            return Ok(None);
         }
 
         let length = self.reader.read_u32()?;
@@ -103,7 +104,10 @@ impl<'a> ChunkReader<'a> {
         if self.validate_crc {
             let actual_crc = crc32(&chunk_type_bytes, data);
             if crc != actual_crc {
-                return Err(Error::CrcMismatch { expected: crc, actual: actual_crc });
+                return Err(Error::CrcMismatch {
+                    expected: crc,
+                    actual: actual_crc,
+                });
             }
         }
 

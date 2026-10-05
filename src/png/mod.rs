@@ -9,20 +9,20 @@ mod header;
 mod image;
 pub mod metadata;
 mod owned_chunk;
-mod png_chunks;
 pub(crate) mod palette;
+mod png_chunks;
 mod transparency;
 
 pub use bitmap::{Bitmap, PixelFormat};
 pub use chunk::{Chunk, ChunkType};
 pub use filter::FilterType;
 pub use header::{ColorType, ImageHeader, Interlace};
-pub(crate) use image::ImageChunks;
 pub use image::Image;
+pub(crate) use image::ImageChunks;
 pub use metadata::Metadata;
 pub use owned_chunk::{ChunkPosition, OwnedChunk};
-pub use png_chunks::PngChunks;
 pub use palette::Palette;
+pub use png_chunks::PngChunks;
 pub use transparency::{PaletteAlpha, Transparency};
 
 /// The 8-byte signature every PNG file starts with.

@@ -40,7 +40,10 @@ pub enum Error {
     InvalidColorType(u8),
 
     /// The bit depth is not allowed for the color type.
-    InvalidBitDepth { color_type: ColorType, bit_depth: u8 },
+    InvalidBitDepth {
+        color_type: ColorType,
+        bit_depth: u8,
+    },
 
     /// The compression method is not 0 (deflate).
     InvalidCompressionMethod(u8),
@@ -99,10 +102,16 @@ pub enum Error {
 
     /// The `tRNS` chunk's length is wrong for the color type: it must be 2 bytes
     /// for grayscale, 6 for RGB, and 1 or more for indexed.
-    InvalidTransparencyLength { color_type: ColorType, length: usize },
+    InvalidTransparencyLength {
+        color_type: ColorType,
+        length: usize,
+    },
 
     /// An indexed image's `tRNS` chunk has more alpha values than its palette has entries.
-    TooManyTransparencyEntries { entries: usize, palette_entries: usize },
+    TooManyTransparencyEntries {
+        entries: usize,
+        palette_entries: usize,
+    },
 
     /// An image with an alpha channel has a `tRNS` chunk, which isn't allowed.
     UnexpectedTransparency(ColorType),
@@ -118,7 +127,10 @@ pub enum Error {
     TransparencyBeforePalette,
 
     /// An ancillary chunk's data has the wrong length for its type.
-    InvalidChunkLength { chunk_type: ChunkType, length: usize },
+    InvalidChunkLength {
+        chunk_type: ChunkType,
+        length: usize,
+    },
 
     /// An ancillary chunk's data has the right length but an invalid value.
     InvalidChunkData(ChunkType),
@@ -132,7 +144,10 @@ pub enum Error {
     DuplicateChunk(ChunkType),
 
     /// A `zTXt` or `iTXt` chunk's text decompresses to more than `max_size` bytes.
-    TextTooLong { chunk_type: ChunkType, max_size: usize },
+    TextTooLong {
+        chunk_type: ChunkType,
+        max_size: usize,
+    },
 
     /// The pixel data given to the encoder isn't the size its header needs:
     /// `ImageHeader::image_size` bytes.
@@ -152,7 +167,10 @@ impl fmt::Display for Error {
             Error::InvalidChunkType(bytes) => write!(f, "invalid chunk type {bytes:02X?}"),
             Error::ChunkTooLong(length) => write!(f, "chunk length {length} exceeds 2^31 - 1"),
             Error::CrcMismatch { expected, actual } => {
-                write!(f, "CRC mismatch: expected {expected:#010X}, got {actual:#010X}")
+                write!(
+                    f,
+                    "CRC mismatch: expected {expected:#010X}, got {actual:#010X}"
+                )
             }
             Error::MissingImageHeader => f.write_str("first chunk is not IHDR"),
             Error::InvalidImageHeaderLength(length) => {
@@ -162,8 +180,14 @@ impl fmt::Display for Error {
                 write!(f, "invalid image dimensions {width}x{height}")
             }
             Error::InvalidColorType(value) => write!(f, "invalid color type {value}"),
-            Error::InvalidBitDepth { color_type, bit_depth } => {
-                write!(f, "bit depth {bit_depth} is not allowed for color type {color_type:?}")
+            Error::InvalidBitDepth {
+                color_type,
+                bit_depth,
+            } => {
+                write!(
+                    f,
+                    "bit depth {bit_depth} is not allowed for color type {color_type:?}"
+                )
             }
             Error::InvalidCompressionMethod(value) => {
                 write!(f, "invalid compression method {value}")
@@ -184,22 +208,42 @@ impl fmt::Display for Error {
             Error::ImageTooLarge => f.write_str("image is too large for this platform"),
             Error::MissingPalette => f.write_str("indexed image has no PLTE chunk"),
             Error::InvalidPaletteLength(length) => {
-                write!(f, "PLTE length is {length}, expected a multiple of 3 from 3 to 768")
+                write!(
+                    f,
+                    "PLTE length is {length}, expected a multiple of 3 from 3 to 768"
+                )
             }
             Error::TooManyPaletteEntries { entries, bit_depth } => {
-                write!(f, "palette has {entries} entries, more than {bit_depth}-bit indices can reach")
+                write!(
+                    f,
+                    "palette has {entries} entries, more than {bit_depth}-bit indices can reach"
+                )
             }
-            Error::UnexpectedPalette(color_type) => write!(f, "PLTE chunk is not allowed for color type {color_type:?}"),
+            Error::UnexpectedPalette(color_type) => {
+                write!(f, "PLTE chunk is not allowed for color type {color_type:?}")
+            }
             Error::DuplicatePalette => f.write_str("more than one PLTE chunk"),
             Error::PaletteAfterImageData => f.write_str("PLTE chunk comes after IDAT"),
             Error::PaletteIndexOutOfRange { index, entries } => {
-                write!(f, "palette index {index} is out of range for a palette of {entries} entries")
+                write!(
+                    f,
+                    "palette index {index} is out of range for a palette of {entries} entries"
+                )
             }
             Error::InvalidTransparencyLength { color_type, length } => {
-                write!(f, "tRNS length {length} is invalid for color type {color_type:?}")
+                write!(
+                    f,
+                    "tRNS length {length} is invalid for color type {color_type:?}"
+                )
             }
-            Error::TooManyTransparencyEntries { entries, palette_entries } => {
-                write!(f, "tRNS has {entries} entries, more than the palette's {palette_entries}")
+            Error::TooManyTransparencyEntries {
+                entries,
+                palette_entries,
+            } => {
+                write!(
+                    f,
+                    "tRNS has {entries} entries, more than the palette's {palette_entries}"
+                )
             }
             Error::UnexpectedTransparency(color_type) => {
                 write!(f, "tRNS chunk is not allowed for color type {color_type:?}")
@@ -211,16 +255,27 @@ impl fmt::Display for Error {
                 write!(f, "{chunk_type} chunk has invalid length {length}")
             }
             Error::InvalidChunkData(chunk_type) => write!(f, "{chunk_type} chunk has invalid data"),
-            Error::MisplacedChunk(chunk_type) => write!(f, "{chunk_type} chunk is not allowed here"),
+            Error::MisplacedChunk(chunk_type) => {
+                write!(f, "{chunk_type} chunk is not allowed here")
+            }
             Error::DuplicateChunk(chunk_type) => write!(f, "more than one {chunk_type} chunk"),
-            Error::TextTooLong { chunk_type, max_size } => {
-                write!(f, "{chunk_type} text decompresses to more than {max_size} bytes")
+            Error::TextTooLong {
+                chunk_type,
+                max_size,
+            } => {
+                write!(
+                    f,
+                    "{chunk_type} text decompresses to more than {max_size} bytes"
+                )
             }
             Error::InvalidImageDataLength { expected, actual } => {
                 write!(f, "pixel data is {actual} bytes, expected {expected}")
             }
             Error::UnexpectedCriticalChunk(chunk_type) => {
-                write!(f, "{chunk_type} is a critical chunk and can't be written as an extra chunk")
+                write!(
+                    f,
+                    "{chunk_type} is a critical chunk and can't be written as an extra chunk"
+                )
             }
         }
     }

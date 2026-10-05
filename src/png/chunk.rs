@@ -73,30 +73,35 @@ impl ChunkType {
     }
 
     /// The four type bytes, as they appear in the file.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; 4] {
         &self.0
     }
 
     /// Critical chunks (uppercase first letter) must be understood to display the
     /// image. Ancillary chunks (lowercase) can be ignored by decoders that don't know them.
+    #[must_use]
     pub fn is_critical(&self) -> bool {
         self.0[0] >= ASCII_UPPERCASE_A && self.0[0] <= ASCII_UPPERCASE_Z
     }
 
     /// Public chunks (uppercase second letter) are defined by the PNG specification or
     /// registered with it. Private chunks (lowercase) are application-specific.
+    #[must_use]
     pub fn is_public(&self) -> bool {
         self.0[1] >= ASCII_UPPERCASE_A && self.0[1] <= ASCII_UPPERCASE_Z
     }
 
     /// The third letter must be uppercase in the current version of PNG. A chunk with a
     /// lowercase third letter isn't invalid, but should be treated as unknown.
+    #[must_use]
     pub fn is_reserved_bit_valid(&self) -> bool {
         self.0[2] >= ASCII_UPPERCASE_A && self.0[2] <= ASCII_UPPERCASE_Z
     }
 
     /// Safe-to-copy chunks (lowercase fourth letter) may be copied by editors that don't
     /// understand them, even after changing critical chunks such as the image data.
+    #[must_use]
     pub fn is_safe_to_copy(&self) -> bool {
         !(self.0[3] >= ASCII_UPPERCASE_A && self.0[3] <= ASCII_UPPERCASE_Z)
     }
@@ -129,21 +134,28 @@ pub struct Chunk<'a> {
 
 impl<'a> Chunk<'a> {
     pub(crate) fn new(chunk_type: ChunkType, data: &'a [u8], crc: u32) -> Self {
-        Self { chunk_type, data, crc }
+        Self {
+            chunk_type,
+            data,
+            crc,
+        }
     }
 
     /// The chunk's type.
+    #[must_use]
     pub fn chunk_type(&self) -> ChunkType {
         self.chunk_type
     }
 
     /// The chunk's data, without the length, type and CRC fields.
+    #[must_use]
     pub fn data(&self) -> &'a [u8] {
         self.data
     }
 
     /// The CRC stored in the file. It has already been checked unless CRC validation was
     /// turned off.
+    #[must_use]
     pub fn crc(&self) -> u32 {
         self.crc
     }

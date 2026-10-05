@@ -44,7 +44,10 @@ fn files() -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("png")))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+        })
         .collect();
     from_dir.sort();
     if !from_dir.is_empty() {
@@ -57,7 +60,8 @@ fn files() -> Vec<PathBuf> {
 
 fn bench_file(path: &Path, runs: usize) {
     let data = std::fs::read(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    let header = format_png::read_header(&data).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let header = format_png::read_header(&data)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let image_size = header.image_size().expect("image fits in memory");
     let rgba_size = header.width as usize * header.height as usize * 4;
 
@@ -82,7 +86,9 @@ fn bench_file(path: &Path, runs: usize) {
         }
     }
 
-    let bench = |name: &str, bytes_out: usize, f: &mut dyn FnMut()| report(name, bytes_out, measure(runs, f));
+    let bench = |name: &str, bytes_out: usize, f: &mut dyn FnMut()| {
+        report(name, bytes_out, measure(runs, f))
+    };
 
     bench("read_header", 0, &mut || {
         black_box(format_png::read_header(black_box(&data)).unwrap());
@@ -100,11 +106,15 @@ fn bench_file(path: &Path, runs: usize) {
     {
         let mut decompressor = Decompressor::new();
         let mut scanlines = Vec::new();
-        decompressor.decompress_zlib_into(&compressed, &mut scanlines).unwrap();
+        decompressor
+            .decompress_zlib_into(&compressed, &mut scanlines)
+            .unwrap();
         let scanline_size = scanlines.len();
         bench("zlib decompression only", scanline_size, &mut || {
             scanlines.clear();
-            decompressor.decompress_zlib_into(black_box(&compressed), &mut scanlines).unwrap();
+            decompressor
+                .decompress_zlib_into(black_box(&compressed), &mut scanlines)
+                .unwrap();
             black_box(&scanlines);
         });
     }
@@ -119,36 +129,61 @@ fn bench_file(path: &Path, runs: usize) {
     }
 
     {
-        let no_crc = DecodeOptions { validate_crc: false, ..DecodeOptions::default() };
+        let no_crc = DecodeOptions {
+            validate_crc: false,
+            ..DecodeOptions::default()
+        };
         let mut decoder = Decoder::with_options(no_crc);
         let mut pixels = Vec::new();
-        bench("Decoder::decode_into (reused, no CRC)", image_size, &mut || {
-            decoder.decode_into(black_box(&data), &mut pixels).unwrap();
-            black_box(&pixels);
-        });
+        bench(
+            "Decoder::decode_into (reused, no CRC)",
+            image_size,
+            &mut || {
+                decoder.decode_into(black_box(&data), &mut pixels).unwrap();
+                black_box(&pixels);
+            },
+        );
     }
 
-    bench("format_png::decode (new each time)", image_size, &mut || {
-        black_box(format_png::decode(black_box(&data)).unwrap());
-    });
+    bench(
+        "format_png::decode (new each time)",
+        image_size,
+        &mut || {
+            black_box(format_png::decode(black_box(&data)).unwrap());
+        },
+    );
 
     {
         let mut decoder = Decoder::new();
         let mut rgba = Vec::new();
-        bench("Decoder::decode_bitmap_into Rgba8 (reused)", rgba_size, &mut || {
-            decoder.decode_bitmap_into(black_box(&data), PixelFormat::Rgba8, &mut rgba).unwrap();
-            black_box(&rgba);
-        });
+        bench(
+            "Decoder::decode_bitmap_into Rgba8 (reused)",
+            rgba_size,
+            &mut || {
+                decoder
+                    .decode_bitmap_into(black_box(&data), PixelFormat::Rgba8, &mut rgba)
+                    .unwrap();
+                black_box(&rgba);
+            },
+        );
     }
 
-    bench("format_png::decode_rgba8 (new each time)", rgba_size, &mut || {
-        black_box(format_png::decode_rgba8(black_box(&data)).unwrap());
-    });
+    bench(
+        "format_png::decode_rgba8 (new each time)",
+        rgba_size,
+        &mut || {
+            black_box(format_png::decode_rgba8(black_box(&data)).unwrap());
+        },
+    );
 
     let image = format_png::decode(&data).unwrap();
-    bench("Image::to_bitmap Rgba8 (conversion only)", rgba_size, &mut || {
-        black_box(image.to_bitmap(PixelFormat::Rgba8).unwrap());
-    });
+    bench(
+        "Image::to_bitmap Rgba8 (conversion only)",
+        rgba_size,
+        &mut || {
+            black_box(image.to_bitmap(PixelFormat::Rgba8).unwrap());
+        },
+    );
 }
 
 /// One warm-up run, then `runs` timed runs, sorted.
@@ -169,7 +204,10 @@ fn report(name: &str, bytes_out: usize, times: Vec<Duration>) {
     let ms = |time: Duration| time.as_secs_f64() * 1e3;
     let median = times[times.len() / 2];
     let throughput = if bytes_out > 0 {
-        format!("{:>7.0} MB/s", bytes_out as f64 / median.as_secs_f64() / 1e6)
+        format!(
+            "{:>7.0} MB/s",
+            bytes_out as f64 / median.as_secs_f64() / 1e6
+        )
     } else {
         String::new()
     };

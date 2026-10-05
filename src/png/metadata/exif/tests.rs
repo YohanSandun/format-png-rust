@@ -33,7 +33,10 @@ fn parse_rejects_data_shorter_than_the_tiff_header() {
     for length in [0, 4, 7] {
         assert_eq!(
             Exif::parse(&BIG_ENDIAN[..length]),
-            Err(Error::InvalidChunkLength { chunk_type: ChunkType::EXIF, length }),
+            Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::EXIF,
+                length
+            }),
             "{length} bytes"
         );
     }
@@ -42,7 +45,11 @@ fn parse_rejects_data_shorter_than_the_tiff_header() {
 #[test]
 fn parse_rejects_unknown_byte_orders() {
     for header in [*b"MI\0*\0\0\0\x08", *b"Exif\0\0MM", [0; 8]] {
-        assert_eq!(Exif::parse(&header), Err(Error::InvalidChunkData(ChunkType::EXIF)), "{header:?}");
+        assert_eq!(
+            Exif::parse(&header),
+            Err(Error::InvalidChunkData(ChunkType::EXIF)),
+            "{header:?}"
+        );
     }
 }
 
@@ -50,5 +57,8 @@ fn parse_rejects_unknown_byte_orders() {
 fn parse_rejects_42_in_the_wrong_byte_order() {
     let mixed = [b'M', b'M', 42, 0, 0, 0, 0, 8];
 
-    assert_eq!(Exif::parse(&mixed), Err(Error::InvalidChunkData(ChunkType::EXIF)));
+    assert_eq!(
+        Exif::parse(&mixed),
+        Err(Error::InvalidChunkData(ChunkType::EXIF))
+    );
 }

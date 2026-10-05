@@ -56,8 +56,8 @@ pub(crate) fn transparency_data(transparency: &Transparency) -> Vec<u8> {
         Transparency::Rgb(rgb) => {
             let [r, g, b] = rgb.map(u16::to_be_bytes);
             vec![r[0], r[1], g[0], g[1], b[0], b[1]]
-        },
-        Transparency::Palette(palette_alpha) => palette_alpha.values().to_vec()
+        }
+        Transparency::Palette(palette_alpha) => palette_alpha.values().to_vec(),
     }
 }
 

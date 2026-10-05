@@ -32,32 +32,47 @@ pub struct Image {
 }
 
 impl Image {
-    pub(crate) fn new(header: ImageHeader, stride: usize, data: Vec<u8>, chunks: ImageChunks) -> Self {
+    pub(crate) fn new(
+        header: ImageHeader,
+        stride: usize,
+        data: Vec<u8>,
+        chunks: ImageChunks,
+    ) -> Self {
         debug_assert_eq!(data.len(), stride * header.height as usize);
-        Self { header, stride, data, chunks }
+        Self {
+            header,
+            stride,
+            data,
+            chunks,
+        }
     }
 
     /// The image's header.
+    #[must_use]
     pub fn header(&self) -> &ImageHeader {
         &self.header
     }
 
     /// Width in pixels.
+    #[must_use]
     pub fn width(&self) -> u32 {
         self.header.width
     }
 
     /// Height in pixels.
+    #[must_use]
     pub fn height(&self) -> u32 {
         self.header.height
     }
 
     /// Bytes per row.
+    #[must_use]
     pub fn stride(&self) -> usize {
         self.stride
     }
 
     /// All the pixel data, `stride() * height()` bytes.
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
@@ -67,8 +82,13 @@ impl Image {
     /// # Panics
     ///
     /// Panics if `y` is not less than [`height`](Self::height).
+    #[must_use]
     pub fn row(&self, y: u32) -> &[u8] {
-        assert!(y < self.height(), "row {y} is out of range for an image {} rows high", self.height());
+        assert!(
+            y < self.height(),
+            "row {y} is out of range for an image {} rows high",
+            self.height()
+        );
 
         let start = y as usize * self.stride;
         &self.data[start..start + self.stride]
@@ -77,6 +97,7 @@ impl Image {
     /// The `PLTE` palette. Indexed images always have one. RGB and RGBA images
     /// may have one as a suggestion for displays with few colors; it isn't used
     /// when converting them. Grayscale images never have one.
+    #[must_use]
     pub fn palette(&self) -> Option<&Palette> {
         self.chunks.palette.as_ref()
     }
@@ -84,12 +105,14 @@ impl Image {
     /// The `tRNS` transparency, if the image has one: a transparent color for
     /// grayscale and RGB images, or alpha values for an indexed image's palette.
     /// Images with an alpha channel never have one.
+    #[must_use]
     pub fn transparency(&self) -> Option<&Transparency> {
         self.chunks.transparency.as_ref()
     }
 
     /// The known ancillary chunks, parsed. Empty unless the image was decoded with
     /// [`DecodeOptions::preserve_metadata`](crate::DecodeOptions::preserve_metadata).
+    #[must_use]
     pub fn metadata(&self) -> &Metadata {
         &self.chunks.metadata
     }
@@ -97,11 +120,13 @@ impl Image {
     /// Raw copies of every ancillary chunk, in file order, including private and
     /// unknown ones. Empty unless the image was decoded with
     /// [`DecodeOptions::preserve_chunks`](crate::DecodeOptions::preserve_chunks).
+    #[must_use]
     pub fn ancillary_chunks(&self) -> &[OwnedChunk] {
         &self.chunks.ancillary
     }
 
     /// Consumes the image and returns its pixel data.
+    #[must_use]
     pub fn into_data(self) -> Vec<u8> {
         self.data
     }

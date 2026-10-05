@@ -30,7 +30,9 @@ impl Palette {
     /// - `Error::TooManyPaletteEntries` if an indexed image's palette has more
     ///   entries than its bit depth can index (2 for 1-bit, 4 for 2-bit, and so on).
     pub(crate) fn parse(data: &[u8], header: &ImageHeader) -> Result<Self, Error> {
-        if header.color_type == ColorType::Grayscale || header.color_type == ColorType::GrayscaleAlpha {
+        if header.color_type == ColorType::Grayscale
+            || header.color_type == ColorType::GrayscaleAlpha
+        {
             return Err(Error::UnexpectedPalette(header.color_type));
         }
 
@@ -43,16 +45,15 @@ impl Palette {
         // Only indexed images are limited by bit depth; a suggested palette for RGB
         // or RGBA may have up to 256 entries at any depth.
         if header.color_type == ColorType::Indexed && entries > 1 << header.bit_depth {
-            return Err(Error::TooManyPaletteEntries { entries, bit_depth: header.bit_depth });
+            return Err(Error::TooManyPaletteEntries {
+                entries,
+                bit_depth: header.bit_depth,
+            });
         }
 
         let colors: [[u8; 3]; MAX_ENTRIES] = std::array::from_fn(|i| {
             if i < entries {
-                [
-                    data[i * 3],
-                    data[i * 3 + 1],
-                    data[i * 3 + 2],
-                ]
+                [data[i * 3], data[i * 3 + 1], data[i * 3 + 2]]
             } else {
                 [0, 0, 0]
             }
@@ -80,7 +81,7 @@ impl Palette {
     /// The length given is in bytes, 3 per color, as for a `PLTE` chunk.
     pub fn from_colors(colors: &[[u8; 3]]) -> Result<Self, Error> {
         if colors.is_empty() || colors.len() > MAX_ENTRIES {
-            return Err(Error::InvalidPaletteLength(colors.len()*3));
+            return Err(Error::InvalidPaletteLength(colors.len() * 3));
         }
 
         let mut pallete = [[0u8; 3]; MAX_ENTRIES];
@@ -94,21 +95,25 @@ impl Palette {
     }
 
     /// The colors, in index order.
+    #[must_use]
     pub fn colors(&self) -> &[[u8; 3]] {
         &self.colors[..self.len]
     }
 
     /// The number of colors, 1 to 256.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Always `false`: a palette has at least one color.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// The color at `index`, or `None` if the palette is shorter than that.
+    #[must_use]
     pub fn get(&self, index: u8) -> Option<[u8; 3]> {
         self.colors().get(usize::from(index)).copied()
     }

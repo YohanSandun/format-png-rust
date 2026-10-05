@@ -219,7 +219,10 @@ fn read_bytes_huge_length_fails_without_overflow_panic() {
     let mut reader = ByteReader::new(&data);
 
     reader.read_u8().unwrap();
-    assert_eq!(reader.read_bytes(usize::MAX), Err(Error::UnexpectedEndOfInput));
+    assert_eq!(
+        reader.read_bytes(usize::MAX),
+        Err(Error::UnexpectedEndOfInput)
+    );
 }
 
 #[test]

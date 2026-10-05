@@ -7,13 +7,20 @@
 use rust_deflate::Decompressor;
 
 use crate::error::Error;
-use crate::png::metadata::{Chromaticities, CodingIndependentCodePoints, Exif, Gamma, IccProfile, PhysicalDimensions, RenderingIntent, Text, Time};
+use crate::png::metadata::{
+    Chromaticities, CodingIndependentCodePoints, Exif, Gamma, IccProfile, PhysicalDimensions,
+    RenderingIntent, Text, Time,
+};
 use crate::png::{Chunk, ChunkPosition, ChunkType, Metadata, OwnedChunk};
 
 /// Appends a copy of `chunk`, found at `position`, to `chunks` if it's ancillary.
 /// Critical chunks (`IHDR`, `PLTE`, `IDAT`, `IEND`, and unknown critical ones)
 /// are never copied: the decoder has already used them.
-pub(crate) fn preserve_chunk(chunk: &Chunk<'_>, position: ChunkPosition, chunks: &mut Vec<OwnedChunk>) {
+pub(crate) fn preserve_chunk(
+    chunk: &Chunk<'_>,
+    position: ChunkPosition,
+    chunks: &mut Vec<OwnedChunk>,
+) {
     if !chunk.chunk_type().is_critical() {
         chunks.push(OwnedChunk::new(chunk, position));
     }
@@ -61,15 +68,31 @@ fn read_known_chunk(
     let data = chunk.data();
     match chunk_type {
         ChunkType::GAMA => store(&mut metadata.gamma, chunk_type, || Gamma::parse(data)),
-        ChunkType::CHRM => store(&mut metadata.chromaticities, chunk_type, || Chromaticities::parse(data)),
-        ChunkType::SRGB => store(&mut metadata.srgb, chunk_type, || RenderingIntent::parse(data)),
-        ChunkType::PHYS => store(&mut metadata.physical_dimensions, chunk_type, || PhysicalDimensions::parse(data)),
+        ChunkType::CHRM => store(&mut metadata.chromaticities, chunk_type, || {
+            Chromaticities::parse(data)
+        }),
+        ChunkType::SRGB => store(&mut metadata.srgb, chunk_type, || {
+            RenderingIntent::parse(data)
+        }),
+        ChunkType::PHYS => store(&mut metadata.physical_dimensions, chunk_type, || {
+            PhysicalDimensions::parse(data)
+        }),
         ChunkType::TIME => store(&mut metadata.time, chunk_type, || Time::parse(data)),
         ChunkType::TEXT => push(&mut metadata.text, Text::parse_text(data)),
-        ChunkType::ZTXT => push(&mut metadata.text, Text::parse_compressed_with(data, decompressor, Text::DEFAULT_MAX_SIZE)),
-        ChunkType::ITXT => push(&mut metadata.text, Text::parse_international_with(data, decompressor, Text::DEFAULT_MAX_SIZE)),
-        ChunkType::ICCP => store(&mut metadata.icc_profile, chunk_type, || IccProfile::parse_with(data, decompressor, IccProfile::DEFAULT_MAX_SIZE)),
-        ChunkType::CICP => store(&mut metadata.cicp, chunk_type, || CodingIndependentCodePoints::parse(data)),
+        ChunkType::ZTXT => push(
+            &mut metadata.text,
+            Text::parse_compressed_with(data, decompressor, Text::DEFAULT_MAX_SIZE),
+        ),
+        ChunkType::ITXT => push(
+            &mut metadata.text,
+            Text::parse_international_with(data, decompressor, Text::DEFAULT_MAX_SIZE),
+        ),
+        ChunkType::ICCP => store(&mut metadata.icc_profile, chunk_type, || {
+            IccProfile::parse_with(data, decompressor, IccProfile::DEFAULT_MAX_SIZE)
+        }),
+        ChunkType::CICP => store(&mut metadata.cicp, chunk_type, || {
+            CodingIndependentCodePoints::parse(data)
+        }),
         ChunkType::EXIF => store(&mut metadata.exif, chunk_type, || Exif::parse(data)),
         _ => Ok(()),
     }
@@ -78,7 +101,11 @@ fn read_known_chunk(
 /// Fills `slot` with the result of `parse`, for a chunk that may appear only once.
 /// Returns `Error::DuplicateChunk` if `slot` is already filled, or `parse`'s error;
 /// either way `slot` is left as it was.
-fn store<T>(slot: &mut Option<T>, chunk_type: ChunkType, parse: impl FnOnce() -> Result<T, Error>) -> Result<(), Error> {
+fn store<T>(
+    slot: &mut Option<T>,
+    chunk_type: ChunkType,
+    parse: impl FnOnce() -> Result<T, Error>,
+) -> Result<(), Error> {
     if slot.is_some() {
         return Err(Error::DuplicateChunk(chunk_type));
     }
@@ -108,15 +135,15 @@ fn check_position(chunk_type: ChunkType, position: ChunkPosition) -> Result<(), 
             } else {
                 Ok(())
             }
-        },
+        }
         ChunkType::PHYS | ChunkType::EXIF => {
             if position == ChunkPosition::AfterImageData {
                 Err(Error::MisplacedChunk(chunk_type))
             } else {
                 Ok(())
             }
-        },
-        _ => Ok(())
+        }
+        _ => Ok(()),
     }
 }
 

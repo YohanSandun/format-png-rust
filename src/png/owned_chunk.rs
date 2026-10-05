@@ -28,7 +28,11 @@ pub struct OwnedChunk {
 impl OwnedChunk {
     /// Copies `chunk`, found at `position`.
     pub(crate) fn new(chunk: &Chunk<'_>, position: ChunkPosition) -> Self {
-        Self { chunk_type: chunk.chunk_type(), data: chunk.data().to_vec(), position }
+        Self {
+            chunk_type: chunk.chunk_type(),
+            data: chunk.data().to_vec(),
+            position,
+        }
     }
 
     /// A chunk of your own, to write with
@@ -47,21 +51,29 @@ impl OwnedChunk {
     /// assert_eq!(chunk.data(), b"settings");
     /// # Ok::<(), format_png::Error>(())
     /// ```
+    #[must_use]
     pub fn from_data(chunk_type: ChunkType, data: Vec<u8>, position: ChunkPosition) -> Self {
-        Self { chunk_type, data, position }
+        Self {
+            chunk_type,
+            data,
+            position,
+        }
     }
 
     /// The chunk's type.
+    #[must_use]
     pub fn chunk_type(&self) -> ChunkType {
         self.chunk_type
     }
 
     /// The chunk's data, without the length, type and CRC fields.
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// Where the chunk was in the file.
+    #[must_use]
     pub fn position(&self) -> ChunkPosition {
         self.position
     }

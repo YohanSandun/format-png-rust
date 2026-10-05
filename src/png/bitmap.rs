@@ -13,10 +13,11 @@ pub enum PixelFormat {
 
 impl PixelFormat {
     /// Bytes per pixel: 3 for [`Rgb8`](Self::Rgb8), 4 for [`Rgba8`](Self::Rgba8).
+    #[must_use]
     pub fn bytes_per_pixel(self) -> usize {
         match self {
             PixelFormat::Rgb8 => 3,
-            PixelFormat::Rgba8 => 4
+            PixelFormat::Rgba8 => 4,
         }
     }
 }
@@ -36,36 +37,50 @@ pub struct Bitmap {
 
 impl Bitmap {
     pub(crate) fn new(width: u32, height: u32, format: PixelFormat, data: Vec<u8>) -> Self {
-        debug_assert_eq!(data.len(), width as usize * height as usize * format.bytes_per_pixel());
-        Self { width, height, format, data }
+        debug_assert_eq!(
+            data.len(),
+            width as usize * height as usize * format.bytes_per_pixel()
+        );
+        Self {
+            width,
+            height,
+            format,
+            data,
+        }
     }
 
     /// Width in pixels.
+    #[must_use]
     pub fn width(&self) -> u32 {
         self.width
     }
 
     /// Height in pixels.
+    #[must_use]
     pub fn height(&self) -> u32 {
         self.height
     }
 
     /// The pixel format.
+    #[must_use]
     pub fn format(&self) -> PixelFormat {
         self.format
     }
 
     /// Bytes per row: width × bytes per pixel, as rows have no padding.
+    #[must_use]
     pub fn stride(&self) -> usize {
         self.width as usize * self.format.bytes_per_pixel()
     }
 
     /// All the pixel data.
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// Consumes the bitmap and returns its pixel data.
+    #[must_use]
     pub fn into_data(self) -> Vec<u8> {
         self.data
     }

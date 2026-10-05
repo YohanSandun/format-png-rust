@@ -31,7 +31,10 @@ impl PhysicalDimensions {
     /// - [`Error::InvalidChunkData`] if the unit byte is above 1.
     pub fn parse(data: &[u8]) -> Result<Self, Error> {
         if data.len() != 9 {
-            return Err(Error::InvalidChunkLength { chunk_type: ChunkType::PHYS, length: data.len() });
+            return Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::PHYS,
+                length: data.len(),
+            });
         }
 
         let unit = match data[8] {
@@ -48,10 +51,14 @@ impl PhysicalDimensions {
     }
 
     /// Dots per inch horizontally and vertically, if the unit is meters.
+    #[must_use]
     pub fn dots_per_inch(&self) -> Option<(f64, f64)> {
         const METERS_PER_INCH: f64 = 0.0254;
         match self.unit {
-            Unit::Meter => Some((f64::from(self.x) * METERS_PER_INCH, f64::from(self.y) * METERS_PER_INCH)),
+            Unit::Meter => Some((
+                f64::from(self.x) * METERS_PER_INCH,
+                f64::from(self.y) * METERS_PER_INCH,
+            )),
             Unit::Unknown => None,
         }
     }

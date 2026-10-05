@@ -2,7 +2,9 @@
 
 use super::{Image, ImageChunks};
 use crate::error::Error;
-use crate::png::{ColorType, ImageHeader, Interlace, Palette, PaletteAlpha, PixelFormat, Transparency};
+use crate::png::{
+    ColorType, ImageHeader, Interlace, Palette, PaletteAlpha, PixelFormat, Transparency,
+};
 
 /// 2x3 RGB, 8-bit: 6 bytes per row.
 fn image() -> Image {
@@ -26,7 +28,15 @@ fn indexed_image(pixels: [u8; 3]) -> Image {
         interlace: Interlace::None,
     };
     let palette = Palette::parse(&[10, 20, 30, 40, 50, 60], &header).unwrap();
-    Image::new(header, 3, pixels.to_vec(), ImageChunks { palette: Some(palette), ..ImageChunks::default() })
+    Image::new(
+        header,
+        3,
+        pixels.to_vec(),
+        ImageChunks {
+            palette: Some(palette),
+            ..ImageChunks::default()
+        },
+    )
 }
 
 #[test]
@@ -52,7 +62,7 @@ fn row_returns_one_row() {
 #[test]
 #[should_panic]
 fn row_past_the_end_panics() {
-    image().row(3);
+    let _ = image().row(3);
 }
 
 #[test]
@@ -86,12 +96,17 @@ fn palette_is_none_without_plte() {
 fn palette_of_indexed_image() {
     let image = indexed_image([0, 1, 0]);
 
-    assert_eq!(image.palette().map(Palette::colors), Some(&[[10, 20, 30], [40, 50, 60]][..]));
+    assert_eq!(
+        image.palette().map(Palette::colors),
+        Some(&[[10, 20, 30], [40, 50, 60]][..])
+    );
 }
 
 #[test]
 fn to_bitmap_of_indexed_image_uses_the_palette() {
-    let bitmap = indexed_image([1, 0, 1]).to_bitmap(PixelFormat::Rgb8).unwrap();
+    let bitmap = indexed_image([1, 0, 1])
+        .to_bitmap(PixelFormat::Rgb8)
+        .unwrap();
 
     assert_eq!(bitmap.data(), &[40, 50, 60, 10, 20, 30, 40, 50, 60]);
 }
@@ -102,7 +117,10 @@ fn to_bitmap_of_indexed_image_rejects_index_past_the_palette() {
 
     assert_eq!(
         image.to_bitmap(PixelFormat::Rgba8),
-        Err(Error::PaletteIndexOutOfRange { index: 2, entries: 2 })
+        Err(Error::PaletteIndexOutOfRange {
+            index: 2,
+            entries: 2
+        })
     );
 }
 
@@ -130,5 +148,8 @@ fn to_bitmap_of_indexed_image_applies_palette_alpha() {
 
     let bitmap = image.to_bitmap(PixelFormat::Rgba8).unwrap();
 
-    assert_eq!(bitmap.data(), &[40, 50, 60, 0, 10, 20, 30, 255, 40, 50, 60, 0]);
+    assert_eq!(
+        bitmap.data(),
+        &[40, 50, 60, 0, 10, 20, 30, 255, 40, 50, 60, 0]
+    );
 }

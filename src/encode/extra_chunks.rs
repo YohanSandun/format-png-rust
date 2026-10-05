@@ -38,7 +38,10 @@ pub(crate) fn validate_extra_chunks(chunks: &[OwnedChunk]) -> Result<(), Error> 
         }
 
         if chunk.data().len() > MAX_CHUNK_LENGTH {
-            return Err(Error::InvalidChunkLength { chunk_type: chunk.chunk_type(), length: chunk.data().len() });
+            return Err(Error::InvalidChunkLength {
+                chunk_type: chunk.chunk_type(),
+                length: chunk.data().len(),
+            });
         }
     }
     Ok(())
@@ -76,11 +79,17 @@ pub(crate) fn encoder_writes(chunk_type: ChunkType, image: &ImageRef<'_>) -> boo
 /// Whether `chunk` should be written for `image`, by the rules in the module
 /// docs. `chunk` has passed `validate_extra_chunks`, so isn't critical.
 pub(crate) fn should_write(chunk: &OwnedChunk, image: &ImageRef<'_>, keep_unsafe: bool) -> bool {
-    (chunk.chunk_type().is_safe_to_copy() || keep_unsafe) && !encoder_writes(chunk.chunk_type(), image)
+    (chunk.chunk_type().is_safe_to_copy() || keep_unsafe)
+        && !encoder_writes(chunk.chunk_type(), image)
 }
 
 /// Appends the chunks of `image` at `position` that `should_write` keeps, in order.
-pub(crate) fn write_extra_chunks(out: &mut Vec<u8>, image: &ImageRef<'_>, position: ChunkPosition, keep_unsafe: bool) {
+pub(crate) fn write_extra_chunks(
+    out: &mut Vec<u8>,
+    image: &ImageRef<'_>,
+    position: ChunkPosition,
+    keep_unsafe: bool,
+) {
     for chunk in image.chunks() {
         if chunk.position() == position && should_write(chunk, image, keep_unsafe) {
             write_chunk(out, chunk.chunk_type(), chunk.data());

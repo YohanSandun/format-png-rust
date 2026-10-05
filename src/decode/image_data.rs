@@ -1,11 +1,13 @@
 use rust_deflate::Decompressor;
 
-use crate::ColorType;
 use super::chunk_reader::ChunkReader;
 use super::metadata::{preserve_chunk, read_ancillary};
 use super::options::DecodeOptions;
+use crate::ColorType;
 use crate::error::Error;
-use crate::png::{Chunk, ChunkPosition, ChunkType, ImageChunks, ImageHeader, Palette, Transparency};
+use crate::png::{
+    Chunk, ChunkPosition, ChunkType, ImageChunks, ImageHeader, Palette, Transparency,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum IdatState {
@@ -81,7 +83,13 @@ pub(crate) fn read_image_chunks<'a>(
                 read_palette(chunk.data(), header, state, &mut found.palette)?;
             }
             ChunkType::TRNS => {
-                read_transparency(chunk.data(), header, state, found.palette.as_ref(), &mut found.transparency)?;
+                read_transparency(
+                    chunk.data(),
+                    header,
+                    state,
+                    found.palette.as_ref(),
+                    &mut found.transparency,
+                )?;
             }
             ChunkType::IDAT => {
                 match state {
@@ -94,7 +102,13 @@ pub(crate) fn read_image_chunks<'a>(
             ChunkType::IEND if state == IdatState::NotSeen => return Err(Error::MissingImageData),
             ChunkType::IEND => return Ok(found),
             _ if options.preserve_metadata => {
-                read_ancillary(&chunk, position, options.strict_ancillary, decompressor, &mut found.metadata)?;
+                read_ancillary(
+                    &chunk,
+                    position,
+                    options.strict_ancillary,
+                    decompressor,
+                    &mut found.metadata,
+                )?;
             }
             _ => {}
         }
@@ -119,7 +133,12 @@ fn chunk_position(state: IdatState, palette_seen: bool) -> ChunkPosition {
 /// - `Error::PaletteAfterImageData` if an `IDAT` came before it.
 /// - `Error::DuplicatePalette` if there was already a `PLTE`.
 /// - Any error from `Palette::parse`.
-fn read_palette(data: &[u8], header: &ImageHeader, state: IdatState, palette: &mut Option<Palette>) -> Result<(), Error> {
+fn read_palette(
+    data: &[u8],
+    header: &ImageHeader,
+    state: IdatState,
+    palette: &mut Option<Palette>,
+) -> Result<(), Error> {
     if state != IdatState::NotSeen {
         return Err(Error::PaletteAfterImageData);
     }
@@ -155,7 +174,7 @@ fn read_transparency(
         return Err(Error::DuplicateTransparency);
     }
 
-    transparency.replace(Transparency::parse(data,header,palette)?);
+    transparency.replace(Transparency::parse(data, header, palette)?);
     Ok(())
 }
 

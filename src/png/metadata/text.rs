@@ -141,7 +141,12 @@ impl Text {
     /// Same as [`parse_international_with`](Self::parse_international_with).
     pub fn parse_international(data: &[u8]) -> Result<Self, Error> {
         Self::parse_international_impl(data, |compressed| {
-            decompress(compressed, ChunkType::ITXT, &mut Decompressor::new(), Self::DEFAULT_MAX_SIZE)
+            decompress(
+                compressed,
+                ChunkType::ITXT,
+                &mut Decompressor::new(),
+                Self::DEFAULT_MAX_SIZE,
+            )
         })
     }
 
@@ -210,6 +215,7 @@ impl Text {
     }
 
     /// The type of the chunk this was read from.
+    #[must_use]
     pub fn chunk_type(&self) -> ChunkType {
         match self.kind {
             TextKind::Plain => ChunkType::TEXT,
@@ -245,7 +251,10 @@ pub(super) fn read_keyword(data: &[u8], chunk_type: ChunkType) -> Result<(String
     if !keyword.iter().all(|&b| is_printable_latin1(b)) {
         return Err(Error::InvalidChunkData(chunk_type));
     }
-    if keyword.first() == Some(&b' ') || keyword.last() == Some(&b' ') || keyword.windows(2).any(|w| w == b"  ") {
+    if keyword.first() == Some(&b' ')
+        || keyword.last() == Some(&b' ')
+        || keyword.windows(2).any(|w| w == b"  ")
+    {
         return Err(Error::InvalidChunkData(chunk_type));
     }
     Ok((latin1_to_string(keyword), rest))
@@ -285,7 +294,10 @@ pub(super) fn decompress(
     decompressor
         .decompress_zlib_with(data, OutputOptions::new().max_output(max_size))
         .map_err(|e| match e {
-            rust_deflate::Error::OutputLimitExceeded => Error::TextTooLong { chunk_type, max_size },
+            rust_deflate::Error::OutputLimitExceeded => Error::TextTooLong {
+                chunk_type,
+                max_size,
+            },
             _ => Error::InvalidChunkData(chunk_type),
         })
 }

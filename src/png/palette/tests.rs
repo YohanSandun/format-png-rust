@@ -5,7 +5,13 @@ use crate::error::Error;
 use crate::png::{ColorType, ImageHeader, Interlace};
 
 fn header(bit_depth: u8, color_type: ColorType) -> ImageHeader {
-    ImageHeader { width: 1, height: 1, bit_depth, color_type, interlace: Interlace::None }
+    ImageHeader {
+        width: 1,
+        height: 1,
+        bit_depth,
+        color_type,
+        interlace: Interlace::None,
+    }
 }
 
 fn indexed(bit_depth: u8) -> ImageHeader {
@@ -14,7 +20,9 @@ fn indexed(bit_depth: u8) -> ImageHeader {
 
 /// `entries` distinct colors as PLTE data.
 fn plte(entries: usize) -> Vec<u8> {
-    (0..entries).flat_map(|i| [i as u8, (i * 3) as u8, (i * 7) as u8]).collect()
+    (0..entries)
+        .flat_map(|i| [i as u8, (i * 3) as u8, (i * 7) as u8])
+        .collect()
 }
 
 // ---------- parse: success ----------
@@ -40,7 +48,10 @@ fn parse_256_entries() {
     let palette = Palette::parse(&plte(256), &indexed(8)).unwrap();
 
     assert_eq!(palette.len(), 256);
-    assert_eq!(palette.get(255), Some([255, (255 * 3) as u8, (255 * 7) as u8]));
+    assert_eq!(
+        palette.get(255),
+        Some([255, (255 * 3) as u8, (255 * 7) as u8])
+    );
 }
 
 #[test]
@@ -54,14 +65,25 @@ fn parse_as_many_entries_as_the_bit_depth_can_index() {
 
 #[test]
 fn parse_fewer_entries_than_the_bit_depth_can_index() {
-    assert_eq!(Palette::parse(&plte(3), &indexed(4)).map(|p| p.len()), Ok(3));
+    assert_eq!(
+        Palette::parse(&plte(3), &indexed(4)).map(|p| p.len()),
+        Ok(3)
+    );
 }
 
 #[test]
 fn parse_suggested_palette_for_rgb_and_rgba() {
     // Not limited by bit depth: a 16-bit RGB image may still suggest 256 colors.
-    for header in [header(8, ColorType::Rgb), header(16, ColorType::Rgb), header(8, ColorType::Rgba)] {
-        assert_eq!(Palette::parse(&plte(256), &header).map(|p| p.len()), Ok(256), "{header:?}");
+    for header in [
+        header(8, ColorType::Rgb),
+        header(16, ColorType::Rgb),
+        header(8, ColorType::Rgba),
+    ] {
+        assert_eq!(
+            Palette::parse(&plte(256), &header).map(|p| p.len()),
+            Ok(256),
+            "{header:?}"
+        );
     }
 }
 
@@ -78,7 +100,10 @@ fn parsed_palettes_with_the_same_colors_are_equal() {
 
 #[test]
 fn parse_rejects_empty_data() {
-    assert_eq!(Palette::parse(&[], &indexed(8)), Err(Error::InvalidPaletteLength(0)));
+    assert_eq!(
+        Palette::parse(&[], &indexed(8)),
+        Err(Error::InvalidPaletteLength(0))
+    );
 }
 
 #[test]
@@ -94,8 +119,14 @@ fn parse_rejects_length_not_a_multiple_of_3() {
 
 #[test]
 fn parse_rejects_more_than_256_entries() {
-    assert_eq!(Palette::parse(&plte(257), &indexed(8)), Err(Error::InvalidPaletteLength(771)));
-    assert_eq!(Palette::parse(&plte(257), &header(8, ColorType::Rgb)), Err(Error::InvalidPaletteLength(771)));
+    assert_eq!(
+        Palette::parse(&plte(257), &indexed(8)),
+        Err(Error::InvalidPaletteLength(771))
+    );
+    assert_eq!(
+        Palette::parse(&plte(257), &header(8, ColorType::Rgb)),
+        Err(Error::InvalidPaletteLength(771))
+    );
 }
 
 #[test]
@@ -145,18 +176,36 @@ fn from_colors_keeps_the_colors_in_order() {
 #[test]
 fn from_colors_accepts_1_to_256_colors() {
     assert!(Palette::from_colors(&[[0; 3]]).is_ok());
-    assert_eq!(Palette::from_colors(&[[7; 3]; 256]).map(|p| p.len()), Ok(256));
+    assert_eq!(
+        Palette::from_colors(&[[7; 3]; 256]).map(|p| p.len()),
+        Ok(256)
+    );
 }
 
 #[test]
 fn from_colors_rejects_no_colors_or_more_than_256() {
-    assert_eq!(Palette::from_colors(&[]), Err(Error::InvalidPaletteLength(0)));
-    assert_eq!(Palette::from_colors(&[[0; 3]; 257]), Err(Error::InvalidPaletteLength(771)));
+    assert_eq!(
+        Palette::from_colors(&[]),
+        Err(Error::InvalidPaletteLength(0))
+    );
+    assert_eq!(
+        Palette::from_colors(&[[0; 3]; 257]),
+        Err(Error::InvalidPaletteLength(771))
+    );
 }
 
 #[test]
 fn from_colors_equals_the_same_palette_parsed() {
-    let header = ImageHeader { width: 1, height: 1, bit_depth: 8, color_type: ColorType::Indexed, interlace: Interlace::None };
+    let header = ImageHeader {
+        width: 1,
+        height: 1,
+        bit_depth: 8,
+        color_type: ColorType::Indexed,
+        interlace: Interlace::None,
+    };
 
-    assert_eq!(Palette::from_colors(&[[1, 2, 3], [4, 5, 6]]), Palette::parse(&[1, 2, 3, 4, 5, 6], &header));
+    assert_eq!(
+        Palette::from_colors(&[[1, 2, 3], [4, 5, 6]]),
+        Palette::parse(&[1, 2, 3, 4, 5, 6], &header)
+    );
 }

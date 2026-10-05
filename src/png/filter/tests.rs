@@ -15,7 +15,10 @@ fn filter_type_from_valid_values() {
 #[test]
 fn filter_type_from_invalid_values_fails() {
     for value in [5, 6, 128, 255] {
-        assert_eq!(FilterType::try_from(value), Err(Error::InvalidFilterType(value)));
+        assert_eq!(
+            FilterType::try_from(value),
+            Err(Error::InvalidFilterType(value))
+        );
     }
 }
 

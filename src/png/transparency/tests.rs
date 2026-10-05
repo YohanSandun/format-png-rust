@@ -5,7 +5,13 @@ use crate::error::Error;
 use crate::png::{ColorType, ImageHeader, Interlace, Palette};
 
 fn header(bit_depth: u8, color_type: ColorType) -> ImageHeader {
-    ImageHeader { width: 1, height: 1, bit_depth, color_type, interlace: Interlace::None }
+    ImageHeader {
+        width: 1,
+        height: 1,
+        bit_depth,
+        color_type,
+        interlace: Interlace::None,
+    }
 }
 
 /// A palette of `entries` colors for an 8-bit indexed image.
@@ -18,15 +24,25 @@ fn parse(data: &[u8], header: &ImageHeader) -> Result<Transparency, Error> {
 }
 
 fn parse_indexed(data: &[u8], palette_entries: usize) -> Result<Transparency, Error> {
-    Transparency::parse(data, &header(8, ColorType::Indexed), Some(&palette(palette_entries)))
+    Transparency::parse(
+        data,
+        &header(8, ColorType::Indexed),
+        Some(&palette(palette_entries)),
+    )
 }
 
 // ---------- grayscale ----------
 
 #[test]
 fn gray_reads_a_big_endian_value() {
-    assert_eq!(parse(&[0x12, 0x34], &header(16, ColorType::Grayscale)), Ok(Transparency::Gray(0x1234)));
-    assert_eq!(parse(&[0x00, 0x25], &header(8, ColorType::Grayscale)), Ok(Transparency::Gray(37)));
+    assert_eq!(
+        parse(&[0x12, 0x34], &header(16, ColorType::Grayscale)),
+        Ok(Transparency::Gray(0x1234))
+    );
+    assert_eq!(
+        parse(&[0x00, 0x25], &header(8, ColorType::Grayscale)),
+        Ok(Transparency::Gray(37))
+    );
 }
 
 #[test]
@@ -46,7 +62,10 @@ fn gray_rejects_other_lengths() {
     for length in [0, 1, 3, 6] {
         assert_eq!(
             parse(&vec![0; length], &header(8, ColorType::Grayscale)),
-            Err(Error::InvalidTransparencyLength { color_type: ColorType::Grayscale, length }),
+            Err(Error::InvalidTransparencyLength {
+                color_type: ColorType::Grayscale,
+                length
+            }),
             "{length} bytes"
         );
     }
@@ -58,14 +77,20 @@ fn gray_rejects_other_lengths() {
 fn rgb_reads_three_big_endian_values() {
     let data = [0x00, 0x01, 0x00, 0x35, 0xAB, 0xCD];
 
-    assert_eq!(parse(&data, &header(16, ColorType::Rgb)), Ok(Transparency::Rgb([1, 53, 0xABCD])));
+    assert_eq!(
+        parse(&data, &header(16, ColorType::Rgb)),
+        Ok(Transparency::Rgb([1, 53, 0xABCD]))
+    );
 }
 
 #[test]
 fn rgb_8_keeps_only_the_low_byte() {
     let data = [0xFF, 0x10, 0x00, 0x20, 0x01, 0x30];
 
-    assert_eq!(parse(&data, &header(8, ColorType::Rgb)), Ok(Transparency::Rgb([0x10, 0x20, 0x30])));
+    assert_eq!(
+        parse(&data, &header(8, ColorType::Rgb)),
+        Ok(Transparency::Rgb([0x10, 0x20, 0x30]))
+    );
 }
 
 #[test]
@@ -73,7 +98,10 @@ fn rgb_rejects_other_lengths() {
     for length in [0, 2, 5, 7] {
         assert_eq!(
             parse(&vec![0; length], &header(8, ColorType::Rgb)),
-            Err(Error::InvalidTransparencyLength { color_type: ColorType::Rgb, length }),
+            Err(Error::InvalidTransparencyLength {
+                color_type: ColorType::Rgb,
+                length
+            }),
             "{length} bytes"
         );
     }
@@ -113,7 +141,10 @@ fn indexed_may_have_as_many_entries_as_the_palette() {
 fn indexed_rejects_more_entries_than_the_palette() {
     assert_eq!(
         parse_indexed(&[0; 5], 4),
-        Err(Error::TooManyTransparencyEntries { entries: 5, palette_entries: 4 })
+        Err(Error::TooManyTransparencyEntries {
+            entries: 5,
+            palette_entries: 4
+        })
     );
 }
 
@@ -121,13 +152,19 @@ fn indexed_rejects_more_entries_than_the_palette() {
 fn indexed_rejects_empty_data() {
     assert_eq!(
         parse_indexed(&[], 4),
-        Err(Error::InvalidTransparencyLength { color_type: ColorType::Indexed, length: 0 })
+        Err(Error::InvalidTransparencyLength {
+            color_type: ColorType::Indexed,
+            length: 0
+        })
     );
 }
 
 #[test]
 fn indexed_needs_the_palette_first() {
-    assert_eq!(parse(&[0, 128], &header(8, ColorType::Indexed)), Err(Error::TransparencyBeforePalette));
+    assert_eq!(
+        parse(&[0, 128], &header(8, ColorType::Indexed)),
+        Err(Error::TransparencyBeforePalette)
+    );
 }
 
 // ---------- color types with alpha ----------
@@ -175,7 +212,10 @@ fn from_values_keeps_the_values_in_order() {
 #[test]
 fn from_values_accepts_1_to_256_values() {
     assert!(PaletteAlpha::from_values(&[0]).is_ok());
-    assert_eq!(PaletteAlpha::from_values(&[7; 256]).map(|a| a.values().len()), Ok(256));
+    assert_eq!(
+        PaletteAlpha::from_values(&[7; 256]).map(|a| a.values().len()),
+        Ok(256)
+    );
 }
 
 #[test]
@@ -183,7 +223,10 @@ fn from_values_rejects_no_values_or_more_than_256() {
     for length in [0, 257] {
         assert_eq!(
             PaletteAlpha::from_values(&vec![0; length]),
-            Err(Error::InvalidTransparencyLength { color_type: ColorType::Indexed, length }),
+            Err(Error::InvalidTransparencyLength {
+                color_type: ColorType::Indexed,
+                length
+            }),
             "{length} values"
         );
     }
@@ -193,5 +236,8 @@ fn from_values_rejects_no_values_or_more_than_256() {
 fn from_values_equals_the_same_alpha_parsed() {
     let parsed = parse_indexed(&[0, 128], 4).unwrap();
 
-    assert_eq!(Transparency::Palette(PaletteAlpha::from_values(&[0, 128]).unwrap()), parsed);
+    assert_eq!(
+        Transparency::Palette(PaletteAlpha::from_values(&[0, 128]).unwrap()),
+        parsed
+    );
 }

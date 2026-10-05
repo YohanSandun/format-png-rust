@@ -13,7 +13,11 @@ pub(crate) fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
     let threshold = 3 * i16::from(c) - (i16::from(a) + i16::from(b));
     let (low, high) = (a.min(b), a.max(b));
     let low_or_c = if i16::from(high) <= threshold { low } else { c };
-    if threshold <= i16::from(low) { high } else { low_or_c }
+    if threshold <= i16::from(low) {
+        high
+    } else {
+        low_or_c
+    }
 }
 /// Reverses one filter. `filtered` holds one scanline's bytes without the filter
 /// type byte, and the raw bytes are written to `out`, which has the same length.
@@ -21,7 +25,13 @@ pub(crate) fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
 /// `previous` is the raw row above in the same pass, or `None` for the first row,
 /// which is treated as all zeros. `bpp` is `ImageHeader::filter_bpp`: 1, 2, 3, 4,
 /// 6 or 8. All arithmetic wraps modulo 256.
-pub(crate) fn unfilter_row(filter_type: FilterType, bpp: usize, previous: Option<&[u8]>, filtered: &[u8], out: &mut [u8]) {
+pub(crate) fn unfilter_row(
+    filter_type: FilterType,
+    bpp: usize,
+    previous: Option<&[u8]>,
+    filtered: &[u8],
+    out: &mut [u8],
+) {
     debug_assert_eq!(filtered.len(), out.len());
     if let Some(previous) = previous {
         debug_assert_eq!(previous.len(), out.len());
@@ -43,7 +53,12 @@ pub(crate) fn unfilter_row(filter_type: FilterType, bpp: usize, previous: Option
 /// [`unfilter_row`] for pixels of `BPP` bytes. Rows are always a whole number of
 /// pixels: images under 8 bits per pixel have `BPP` 1, and wider ones have no padding.
 #[inline(always)]
-fn unfilter_pixels<const BPP: usize>(filter_type: FilterType, previous: Option<&[u8]>, filtered: &[u8], out: &mut [u8]) {
+fn unfilter_pixels<const BPP: usize>(
+    filter_type: FilterType,
+    previous: Option<&[u8]>,
+    filtered: &[u8],
+    out: &mut [u8],
+) {
     let (filtered, rest) = filtered.as_chunks::<BPP>();
     debug_assert!(rest.is_empty());
     let (out, _) = out.as_chunks_mut::<BPP>();
@@ -72,7 +87,9 @@ fn unfilter_pixels<const BPP: usize>(filter_type: FilterType, previous: Option<&
             let mut a = [0; BPP];
             for ((out, x), b) in out.iter_mut().zip(filtered).zip(previous) {
                 // The mean of two bytes without overflow: (a + b) / 2 rounded down.
-                a = std::array::from_fn(|i| x[i].wrapping_add((a[i] & b[i]) + ((a[i] ^ b[i]) >> 1)));
+                a = std::array::from_fn(|i| {
+                    x[i].wrapping_add((a[i] & b[i]) + ((a[i] ^ b[i]) >> 1))
+                });
                 *out = a;
             }
         }
@@ -94,7 +111,11 @@ fn sub<const BPP: usize>(filtered: &[[u8; BPP]], out: &mut [[u8; BPP]]) {
 /// Unfilters pixels that depend only on the raw pixel to their left, which is
 /// zero for the first. `f` takes a filtered byte and the byte to its left.
 #[inline(always)]
-fn map_with_left<const BPP: usize>(filtered: &[[u8; BPP]], out: &mut [[u8; BPP]], f: impl Fn(u8, u8) -> u8) {
+fn map_with_left<const BPP: usize>(
+    filtered: &[[u8; BPP]],
+    out: &mut [[u8; BPP]],
+    f: impl Fn(u8, u8) -> u8,
+) {
     let mut left = [0; BPP];
     for (out, x) in out.iter_mut().zip(filtered) {
         left = std::array::from_fn(|i| f(x[i], left[i]));
@@ -110,7 +131,12 @@ fn map_with_left<const BPP: usize>(filtered: &[[u8; BPP]], out: &mut [[u8; BPP]]
 /// `scanlines.len() == rows * (row_bytes + 1)`.
 ///
 /// Returns `Error::InvalidFilterType` for a filter type byte above 4.
-pub(crate) fn unfilter(scanlines: &[u8], row_bytes: usize, bpp: usize, out: &mut [u8]) -> Result<(), Error> {
+pub(crate) fn unfilter(
+    scanlines: &[u8],
+    row_bytes: usize,
+    bpp: usize,
+    out: &mut [u8],
+) -> Result<(), Error> {
     if row_bytes == 0 {
         return Ok(());
     }
@@ -123,7 +149,13 @@ pub(crate) fn unfilter(scanlines: &[u8], row_bytes: usize, bpp: usize, out: &mut
         // `done` holds the rows already unfiltered; `current` starts at this row.
         let (done, current) = out.split_at_mut(i * row_bytes);
         let previous = (i > 0).then(|| &done[done.len() - row_bytes..]);
-        unfilter_row(filter_type, bpp, previous, &scanline[1..], &mut current[..row_bytes]);
+        unfilter_row(
+            filter_type,
+            bpp,
+            previous,
+            &scanline[1..],
+            &mut current[..row_bytes],
+        );
     }
 
     Ok(())

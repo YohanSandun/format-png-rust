@@ -16,8 +16,8 @@ use rust_deflate::{CompressionOptions, Compressor};
 use super::chunk_writer::write_chunk;
 use crate::error::Error;
 use crate::png::metadata::{
-    Chromaticities, CodingIndependentCodePoints, Gamma, IccProfile, PhysicalDimensions, RenderingIntent, Text, TextKind,
-    Time,
+    Chromaticities, CodingIndependentCodePoints, Gamma, IccProfile, PhysicalDimensions,
+    RenderingIntent, Text, TextKind, Time,
 };
 use crate::png::{ChunkType, Metadata};
 
@@ -77,7 +77,11 @@ fn validate_text(text: &Text) -> Result<(), Error> {
         }
         TextKind::International { .. } => {
             // A null character fails this too.
-            if !text.language_tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            if !text
+                .language_tag
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
                 return invalid;
             }
             if text.translated_keyword.contains('\0') {
@@ -142,7 +146,11 @@ pub(crate) fn write_metadata_before_palette(
     }
 
     if let Some(iccp) = metadata.icc_profile() {
-        write_chunk(out, ChunkType::ICCP, &icc_profile_data(iccp, compressor, options));
+        write_chunk(
+            out,
+            ChunkType::ICCP,
+            &icc_profile_data(iccp, compressor, options),
+        );
     }
 
     if let Some(srgb) = metadata.srgb() {
@@ -239,13 +247,23 @@ pub(crate) fn time_data(time: &Time) -> [u8; 7] {
 /// `cICP` data: color primaries, transfer function, matrix coefficients and the
 /// full-range flag (1 or 0), one byte each.
 pub(crate) fn cicp_data(cicp: &CodingIndependentCodePoints) -> [u8; 4] {
-    [cicp.color_primaries, cicp.transfer_function, cicp.matrix_coefficients, cicp.full_range as u8]
+    [
+        cicp.color_primaries,
+        cicp.transfer_function,
+        cicp.matrix_coefficients,
+        cicp.full_range as u8,
+    ]
 }
 
 /// `iCCP` data: the profile name in Latin-1, a null byte, the compression
 /// method (0), then the profile zlib-compressed with `compressor` and `options`.
-pub(crate) fn icc_profile_data(icc_profile: &IccProfile, compressor: &mut Compressor, options: CompressionOptions) -> Vec<u8> {
-    let mut data = latin1_bytes(&icc_profile.name, ChunkType::ICCP).expect("checked by validate_metadata");
+pub(crate) fn icc_profile_data(
+    icc_profile: &IccProfile,
+    compressor: &mut Compressor,
+    options: CompressionOptions,
+) -> Vec<u8> {
+    let mut data =
+        latin1_bytes(&icc_profile.name, ChunkType::ICCP).expect("checked by validate_metadata");
     data.push(NULL_TERMINATOR);
     data.push(COMPRESSION_METHOD);
     data.extend(compressor.compress_zlib_with(&icc_profile.profile, options));
@@ -265,7 +283,11 @@ pub(crate) fn icc_profile_data(icc_profile: &IccProfile, compressor: &mut Compre
 /// Compression uses `compressor` and `options`. The language tag and
 /// translated keyword of `tEXt` and `zTXt` aren't written: those chunks have
 /// no place for them.
-pub(crate) fn text_data(text: &Text, compressor: &mut Compressor, options: CompressionOptions) -> (ChunkType, Vec<u8>) {
+pub(crate) fn text_data(
+    text: &Text,
+    compressor: &mut Compressor,
+    options: CompressionOptions,
+) -> (ChunkType, Vec<u8>) {
     const VALIDATED: &str = "checked by validate_metadata";
     let chunk_type = text.chunk_type();
 
@@ -278,7 +300,10 @@ pub(crate) fn text_data(text: &Text, compressor: &mut Compressor, options: Compr
         }
         TextKind::Compressed => {
             data.push(COMPRESSION_METHOD);
-            data.extend(compressor.compress_zlib_with(&latin1_bytes(&text.text, chunk_type).expect(VALIDATED), options));
+            data.extend(compressor.compress_zlib_with(
+                &latin1_bytes(&text.text, chunk_type).expect(VALIDATED),
+                options,
+            ));
         }
         TextKind::International { compressed } => {
             data.push(compressed as u8);

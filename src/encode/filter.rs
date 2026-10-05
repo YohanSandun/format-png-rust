@@ -1,7 +1,7 @@
 use super::interlace::interlace_pass;
 use super::options::FilterStrategy;
 use crate::ColorType;
-use crate::decode::unfilter::{paeth_predictor};
+use crate::decode::unfilter::paeth_predictor;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
 use crate::png::{FilterType, ImageHeader, Interlace};
@@ -20,7 +20,13 @@ use crate::png::{FilterType, ImageHeader, Interlace};
 /// - `Up`: `x - b`
 /// - `Average`: `x - floor((a + b) / 2)`, the sum taken without wrapping
 /// - `Paeth`: `x - paeth_predictor(a, b, c)`
-pub(crate) fn filter_row(filter_type: FilterType, bpp: usize, previous: Option<&[u8]>, row: &[u8], out: &mut [u8]) {
+pub(crate) fn filter_row(
+    filter_type: FilterType,
+    bpp: usize,
+    previous: Option<&[u8]>,
+    row: &[u8],
+    out: &mut [u8],
+) {
     debug_assert_eq!(row.len(), out.len());
     if let Some(previous) = previous {
         debug_assert_eq!(previous.len(), out.len());
@@ -44,7 +50,11 @@ fn sub<const BPP: usize>(row: &[[u8; BPP]], out: &mut [[u8; BPP]]) {
 /// Sets each pixel of `out` to `f(x, a)` per byte, where `x` is the raw pixel
 /// and `a` the raw pixel to its left, or zeros for the first one.
 #[inline(always)]
-fn map_with_left<const BPP: usize>(row: &[[u8; BPP]], out: &mut [[u8; BPP]], f: impl Fn(u8, u8) -> u8) {
+fn map_with_left<const BPP: usize>(
+    row: &[[u8; BPP]],
+    out: &mut [[u8; BPP]],
+    f: impl Fn(u8, u8) -> u8,
+) {
     let mut left = [0; BPP];
     for (out, x) in out.iter_mut().zip(row) {
         *out = std::array::from_fn(|i| f(x[i], left[i]));
@@ -54,7 +64,12 @@ fn map_with_left<const BPP: usize>(row: &[[u8; BPP]], out: &mut [[u8; BPP]], f: 
 }
 
 #[inline(always)]
-fn filter_pixels<const BPP: usize>(filter_type: FilterType, previous: Option<&[u8]>, row: &[u8], out: &mut [u8]) {
+fn filter_pixels<const BPP: usize>(
+    filter_type: FilterType,
+    previous: Option<&[u8]>,
+    row: &[u8],
+    out: &mut [u8],
+) {
     let (unfiltered, rest) = row.as_chunks::<BPP>();
     debug_assert!(rest.is_empty());
     let (out, _) = out.as_chunks_mut::<BPP>();
@@ -89,7 +104,8 @@ fn filter_pixels<const BPP: usize>(filter_type: FilterType, previous: Option<&[u
         FilterType::Paeth => {
             let (mut a, mut c) = ([0; BPP], [0; BPP]);
             for ((out, x), b) in out.iter_mut().zip(unfiltered).zip(previous) {
-                *out = std::array::from_fn(|i| x[i].wrapping_sub(paeth_predictor(a[i], b[i], c[i])));
+                *out =
+                    std::array::from_fn(|i| x[i].wrapping_sub(paeth_predictor(a[i], b[i], c[i])));
                 // The predictor uses raw neighbours: this pixel and the one above it.
                 a = *x;
                 c = *b;
@@ -107,7 +123,10 @@ fn filter_pixels<const BPP: usize>(filter_type: FilterType, previous: Option<&[u
 fn row_sum_bounded(row: &[u8], limit: u64) -> u64 {
     let mut sum = 0u64;
     for chunk in row.chunks(64) {
-        sum += chunk.iter().map(|&b| u64::from((b as i8).unsigned_abs())).sum::<u64>();
+        sum += chunk
+            .iter()
+            .map(|&b| u64::from((b as i8).unsigned_abs()))
+            .sum::<u64>();
         // Strictly over: a partial sum equal to `limit` could still end above
         // it, and `choose_filter` would wrongly take it as a tie.
         if sum > limit {
@@ -123,11 +142,22 @@ fn row_sum_bounded(row: &[u8], limit: u64) -> u64 {
 ///
 /// `scratch` is a buffer the length of `row` to filter into. The same arguments
 /// as [`filter_row`] otherwise.
-pub(crate) fn choose_filter(bpp: usize, previous: Option<&[u8]>, row: &[u8], scratch: &mut [u8]) -> FilterType {
+pub(crate) fn choose_filter(
+    bpp: usize,
+    previous: Option<&[u8]>,
+    row: &[u8],
+    scratch: &mut [u8],
+) -> FilterType {
     let mut best = u64::MAX;
     let mut best_filter = FilterType::None;
     // Highest type first, so with `<=` a tie goes to the lower type tried later.
-    let candidates = [FilterType::Paeth, FilterType::Average, FilterType::Up, FilterType::Sub, FilterType::None];
+    let candidates = [
+        FilterType::Paeth,
+        FilterType::Average,
+        FilterType::Up,
+        FilterType::Sub,
+        FilterType::None,
+    ];
     for filter in candidates {
         filter_row(filter, bpp, previous, row, scratch);
         let s = row_sum_bounded(scratch, best);
@@ -153,7 +183,12 @@ pub(crate) fn choose_filter(bpp: usize, previous: Option<&[u8]>, row: &[u8], scr
 /// have, write nothing, not even filter type bytes.
 ///
 /// Returns `Error::ImageTooLarge` if the filtered size overflows `usize`.
-pub(crate) fn filter_image(strategy: FilterStrategy, header: &ImageHeader, data: &[u8], out: &mut Vec<u8>) -> Result<(), Error> {
+pub(crate) fn filter_image(
+    strategy: FilterStrategy,
+    header: &ImageHeader,
+    data: &[u8],
+    out: &mut Vec<u8>,
+) -> Result<(), Error> {
     out.clear();
     out.reserve(header.scanline_size()?);
 
@@ -181,7 +216,13 @@ pub(crate) fn filter_image(strategy: FilterStrategy, header: &ImageHeader, data:
 /// Filters `data`, rows of `row_bytes` bytes each, and appends them to `out`,
 /// each as a filter type byte then the filtered bytes. The first row has no row
 /// above. `strategy` picks the filters, as for `filter_image`.
-fn filter_rows(strategy: FilterStrategy, header: &ImageHeader, data: &[u8], row_bytes: usize, out: &mut Vec<u8>) {
+fn filter_rows(
+    strategy: FilterStrategy,
+    header: &ImageHeader,
+    data: &[u8],
+    row_bytes: usize,
+    out: &mut Vec<u8>,
+) {
     let bpp = header.filter_bpp();
     let adaptive_allowed = header.color_type != ColorType::Indexed && header.bit_depth >= 8;
 
@@ -191,7 +232,9 @@ fn filter_rows(strategy: FilterStrategy, header: &ImageHeader, data: &[u8], row_
     for scanline in data.chunks_exact(row_bytes) {
         let filter_type = match strategy {
             FilterStrategy::Fixed(ft) => ft,
-            FilterStrategy::Adaptive if adaptive_allowed => choose_filter(bpp, previous, scanline, &mut scratch),
+            FilterStrategy::Adaptive if adaptive_allowed => {
+                choose_filter(bpp, previous, scanline, &mut scratch)
+            }
             FilterStrategy::Adaptive => FilterType::None,
         };
 

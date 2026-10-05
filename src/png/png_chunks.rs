@@ -59,20 +59,27 @@ pub struct PngChunks<'a> {
 
 impl<'a> PngChunks<'a> {
     pub(crate) fn new(header: ImageHeader, chunks: Vec<Chunk<'a>>, found: ImageChunks) -> Self {
-        Self { header, chunks, found }
+        Self {
+            header,
+            chunks,
+            found,
+        }
     }
 
     /// The `IHDR` chunk: the image's size and pixel format.
+    #[must_use]
     pub fn header(&self) -> &ImageHeader {
         &self.header
     }
 
     /// The `PLTE` chunk, if any. Indexed images always have one.
+    #[must_use]
     pub fn palette(&self) -> Option<&Palette> {
         self.found.palette.as_ref()
     }
 
     /// The `tRNS` chunk, if any.
+    #[must_use]
     pub fn transparency(&self) -> Option<&Transparency> {
         self.found.transparency.as_ref()
     }
@@ -84,12 +91,14 @@ impl<'a> PngChunks<'a> {
     /// says. An invalid, misplaced or repeated one is left out unless
     /// [`DecodeOptions::strict_ancillary`](crate::DecodeOptions::strict_ancillary)
     /// is set, but is still in [`chunks`](Self::chunks).
+    #[must_use]
     pub fn metadata(&self) -> &Metadata {
         &self.found.metadata
     }
 
     /// Every chunk from `IHDR` to `IEND`, in file order, raw. Anything after
     /// `IEND` isn't read.
+    #[must_use]
     pub fn chunks(&self) -> &[Chunk<'a>] {
         &self.chunks
     }
@@ -97,14 +106,20 @@ impl<'a> PngChunks<'a> {
     /// The chunks of `chunk_type`, in file order. Useful for chunks that can
     /// repeat, such as `IDAT` or your own.
     pub fn chunks_of_type(&self, chunk_type: ChunkType) -> impl Iterator<Item = Chunk<'a>> + '_ {
-        self.chunks.iter().copied().filter(move |chunk| chunk.chunk_type() == chunk_type)
+        self.chunks
+            .iter()
+            .copied()
+            .filter(move |chunk| chunk.chunk_type() == chunk_type)
     }
 
     /// The chunks this crate doesn't parse, in file order: private and custom
     /// chunks, critical or not, and public ones not supported yet, such as `bKGD`.
     /// Read them with [`Chunk::data`].
     pub fn unknown_chunks(&self) -> impl Iterator<Item = Chunk<'a>> + '_ {
-        self.chunks.iter().copied().filter(|chunk| !KNOWN.contains(&chunk.chunk_type()))
+        self.chunks
+            .iter()
+            .copied()
+            .filter(|chunk| !KNOWN.contains(&chunk.chunk_type()))
     }
 }
 

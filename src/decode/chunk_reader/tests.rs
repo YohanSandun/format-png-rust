@@ -38,12 +38,18 @@ fn new_accepts_signature_only() {
 
 #[test]
 fn new_rejects_empty_input() {
-    assert!(matches!(ChunkReader::new(&[]), Err(Error::UnexpectedEndOfInput)));
+    assert!(matches!(
+        ChunkReader::new(&[]),
+        Err(Error::UnexpectedEndOfInput)
+    ));
 }
 
 #[test]
 fn new_rejects_truncated_signature() {
-    assert!(matches!(ChunkReader::new(&SIGNATURE[..7]), Err(Error::UnexpectedEndOfInput)));
+    assert!(matches!(
+        ChunkReader::new(&SIGNATURE[..7]),
+        Err(Error::UnexpectedEndOfInput)
+    ));
 }
 
 #[test]
@@ -51,12 +57,18 @@ fn new_rejects_wrong_signature() {
     let mut data = SIGNATURE;
     data[1] = b'Q';
 
-    assert!(matches!(ChunkReader::new(&data), Err(Error::InvalidSignature)));
+    assert!(matches!(
+        ChunkReader::new(&data),
+        Err(Error::InvalidSignature)
+    ));
 }
 
 #[test]
 fn new_rejects_short_non_png() {
-    assert!(matches!(ChunkReader::new(b"GIF89a"), Err(Error::InvalidSignature)));
+    assert!(matches!(
+        ChunkReader::new(b"GIF89a"),
+        Err(Error::InvalidSignature)
+    ));
 }
 
 // ---------- next_chunk ----------
@@ -84,7 +96,10 @@ fn next_chunk_reads_chunks_in_order_then_none() {
     let data = png(&[&IHDR_CHUNK, &IEND_CHUNK]);
     let mut reader = ChunkReader::new(&data).unwrap();
 
-    assert_eq!(reader.next_chunk().unwrap().unwrap().chunk_type(), ChunkType::IHDR);
+    assert_eq!(
+        reader.next_chunk().unwrap().unwrap().chunk_type(),
+        ChunkType::IHDR
+    );
 
     let iend = reader.next_chunk().unwrap().unwrap();
     assert_eq!(iend.chunk_type(), ChunkType::IEND);
@@ -159,7 +174,10 @@ fn next_chunk_rejects_wrong_crc_by_default() {
 
     assert_eq!(
         reader.next_chunk(),
-        Err(Error::CrcMismatch { expected: 0x1F15_C476, actual: 0x1F15_C489 })
+        Err(Error::CrcMismatch {
+            expected: 0x1F15_C476,
+            actual: 0x1F15_C489
+        })
     );
 }
 
@@ -182,5 +200,8 @@ fn next_chunk_detects_corrupted_data() {
     let data = png(&[&chunk]);
     let mut reader = ChunkReader::new(&data).unwrap();
 
-    assert!(matches!(reader.next_chunk(), Err(Error::CrcMismatch { .. })));
+    assert!(matches!(
+        reader.next_chunk(),
+        Err(Error::CrcMismatch { .. })
+    ));
 }

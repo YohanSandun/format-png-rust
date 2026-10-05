@@ -11,14 +11,24 @@ use crate::png::FilterType;
 const PREVIOUS: [u8; 6] = [10, 200, 30, 250, 5, 128];
 const ROW: [u8; 6] = [20, 100, 255, 3, 250, 64];
 
-fn unfiltered(filter_type: FilterType, bpp: usize, previous: Option<&[u8]>, filtered: &[u8]) -> Vec<u8> {
+fn unfiltered(
+    filter_type: FilterType,
+    bpp: usize,
+    previous: Option<&[u8]>,
+    filtered: &[u8],
+) -> Vec<u8> {
     let mut row = vec![0; filtered.len()];
     unfilter_row(filter_type, bpp, previous, filtered, &mut row);
     row
 }
 
 /// The filters exactly as the PNG spec describes them, one byte at a time.
-fn reference(filter_type: FilterType, bpp: usize, previous: Option<&[u8]>, filtered: &[u8]) -> Vec<u8> {
+fn reference(
+    filter_type: FilterType,
+    bpp: usize,
+    previous: Option<&[u8]>,
+    filtered: &[u8],
+) -> Vec<u8> {
     let mut row = filtered.to_vec();
     for i in 0..row.len() {
         let a = if i >= bpp { row[i - bpp] } else { 0 };
@@ -31,8 +41,18 @@ fn reference(filter_type: FilterType, bpp: usize, previous: Option<&[u8]>, filte
             FilterType::Average => ((u16::from(a) + u16::from(b)) / 2) as u8,
             FilterType::Paeth => {
                 let p = i16::from(a) + i16::from(b) - i16::from(c);
-                let (pa, pb, pc) = ((p - i16::from(a)).abs(), (p - i16::from(b)).abs(), (p - i16::from(c)).abs());
-                if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c }
+                let (pa, pb, pc) = (
+                    (p - i16::from(a)).abs(),
+                    (p - i16::from(b)).abs(),
+                    (p - i16::from(c)).abs(),
+                );
+                if pa <= pb && pa <= pc {
+                    a
+                } else if pb <= pc {
+                    b
+                } else {
+                    c
+                }
             }
         };
         row[i] = row[i].wrapping_add(predictor);
@@ -79,28 +99,40 @@ fn unfilter_none() {
 fn unfilter_sub() {
     let filtered = [20, 100, 255, 239, 150, 65];
 
-    assert_eq!(unfiltered(FilterType::Sub, 3, Some(&PREVIOUS), &filtered), ROW);
+    assert_eq!(
+        unfiltered(FilterType::Sub, 3, Some(&PREVIOUS), &filtered),
+        ROW
+    );
 }
 
 #[test]
 fn unfilter_up() {
     let filtered = [10, 156, 225, 9, 245, 192];
 
-    assert_eq!(unfiltered(FilterType::Up, 3, Some(&PREVIOUS), &filtered), ROW);
+    assert_eq!(
+        unfiltered(FilterType::Up, 3, Some(&PREVIOUS), &filtered),
+        ROW
+    );
 }
 
 #[test]
 fn unfilter_average() {
     let filtered = [15, 0, 240, 124, 198, 129];
 
-    assert_eq!(unfiltered(FilterType::Average, 3, Some(&PREVIOUS), &filtered), ROW);
+    assert_eq!(
+        unfiltered(FilterType::Average, 3, Some(&PREVIOUS), &filtered),
+        ROW
+    );
 }
 
 #[test]
 fn unfilter_paeth() {
     let filtered = [10, 156, 225, 9, 245, 65];
 
-    assert_eq!(unfiltered(FilterType::Paeth, 3, Some(&PREVIOUS), &filtered), ROW);
+    assert_eq!(
+        unfiltered(FilterType::Paeth, 3, Some(&PREVIOUS), &filtered),
+        ROW
+    );
 }
 
 // ---------- unfilter_row, first row ----------
@@ -112,17 +144,26 @@ fn first_row_up_is_unchanged() {
 
 #[test]
 fn first_row_sub() {
-    assert_eq!(unfiltered(FilterType::Sub, 3, None, &[10, 200, 30, 240, 61, 98]), PREVIOUS);
+    assert_eq!(
+        unfiltered(FilterType::Sub, 3, None, &[10, 200, 30, 240, 61, 98]),
+        PREVIOUS
+    );
 }
 
 #[test]
 fn first_row_average_uses_half_the_left_byte() {
-    assert_eq!(unfiltered(FilterType::Average, 3, None, &[10, 200, 30, 245, 161, 113]), PREVIOUS);
+    assert_eq!(
+        unfiltered(FilterType::Average, 3, None, &[10, 200, 30, 245, 161, 113]),
+        PREVIOUS
+    );
 }
 
 #[test]
 fn first_row_paeth_is_like_sub() {
-    assert_eq!(unfiltered(FilterType::Paeth, 3, None, &[10, 200, 30, 240, 61, 98]), PREVIOUS);
+    assert_eq!(
+        unfiltered(FilterType::Paeth, 3, None, &[10, 200, 30, 240, 61, 98]),
+        PREVIOUS
+    );
 }
 
 // ---------- unfilter_row, bpp 1 ----------
@@ -132,11 +173,26 @@ fn unfilter_with_one_byte_per_pixel() {
     let previous = [0x80, 0x0F, 0xFF];
     let row = [0x01, 0x10, 0xF0];
 
-    assert_eq!(unfiltered(FilterType::None, 1, Some(&previous), &[1, 16, 240]), row);
-    assert_eq!(unfiltered(FilterType::Sub, 1, Some(&previous), &[1, 15, 224]), row);
-    assert_eq!(unfiltered(FilterType::Up, 1, Some(&previous), &[129, 1, 241]), row);
-    assert_eq!(unfiltered(FilterType::Average, 1, Some(&previous), &[193, 8, 105]), row);
-    assert_eq!(unfiltered(FilterType::Paeth, 1, Some(&previous), &[129, 15, 241]), row);
+    assert_eq!(
+        unfiltered(FilterType::None, 1, Some(&previous), &[1, 16, 240]),
+        row
+    );
+    assert_eq!(
+        unfiltered(FilterType::Sub, 1, Some(&previous), &[1, 15, 224]),
+        row
+    );
+    assert_eq!(
+        unfiltered(FilterType::Up, 1, Some(&previous), &[129, 1, 241]),
+        row
+    );
+    assert_eq!(
+        unfiltered(FilterType::Average, 1, Some(&previous), &[193, 8, 105]),
+        row
+    );
+    assert_eq!(
+        unfiltered(FilterType::Paeth, 1, Some(&previous), &[129, 15, 241]),
+        row
+    );
 }
 
 #[test]
@@ -144,15 +200,27 @@ fn unfilter_row_shorter_than_bpp() {
     // A 1-pixel row of 16-bit RGBA with bpp 8 has no left neighbours at all.
     let previous = [1, 2, 3, 4, 5, 6, 7, 8];
 
-    assert_eq!(unfiltered(FilterType::Sub, 8, Some(&previous), &[9; 8]), [9; 8]);
-    assert_eq!(unfiltered(FilterType::Paeth, 8, Some(&previous), &[0; 8]), previous);
+    assert_eq!(
+        unfiltered(FilterType::Sub, 8, Some(&previous), &[9; 8]),
+        [9; 8]
+    );
+    assert_eq!(
+        unfiltered(FilterType::Paeth, 8, Some(&previous), &[0; 8]),
+        previous
+    );
 }
 
 // ---------- unfilter_row, against the reference ----------
 
 #[test]
 fn every_filter_and_bpp_matches_the_reference() {
-    let filters = [FilterType::None, FilterType::Sub, FilterType::Up, FilterType::Average, FilterType::Paeth];
+    let filters = [
+        FilterType::None,
+        FilterType::Sub,
+        FilterType::Up,
+        FilterType::Average,
+        FilterType::Paeth,
+    ];
 
     for bpp in [1, 2, 3, 4, 6, 8] {
         // 7 pixels of bytes spread over the whole range, including 0 and 255.
@@ -180,9 +248,19 @@ fn paeth_matches_the_spec_for_every_input() {
             for c in 0..=255_i16 {
                 let p = a + b - c;
                 let (pa, pb, pc) = ((p - a).abs(), (p - b).abs(), (p - c).abs());
-                let expected = if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c };
+                let expected = if pa <= pb && pa <= pc {
+                    a
+                } else if pb <= pc {
+                    b
+                } else {
+                    c
+                };
 
-                assert_eq!(i16::from(paeth_predictor(a as u8, b as u8, c as u8)), expected, "a {a}, b {b}, c {c}");
+                assert_eq!(
+                    i16::from(paeth_predictor(a as u8, b as u8, c as u8)),
+                    expected,
+                    "a {a}, b {b}, c {c}"
+                );
             }
         }
     }
@@ -204,7 +282,9 @@ fn unfilter_scanlines_strips_filter_bytes() {
 
     assert_eq!(
         out,
-        [1, 2, 3, 4, 5, 6, 10, 20, 30, 40, 50, 60, 255, 0, 128, 7, 9, 11]
+        [
+            1, 2, 3, 4, 5, 6, 10, 20, 30, 40, 50, 60, 255, 0, 128, 7, 9, 11
+        ]
     );
 }
 
@@ -222,5 +302,8 @@ fn unfilter_rejects_invalid_filter_type() {
     let scanlines = [0, 1, 2, 5, 3, 4];
     let mut out = [0; 4];
 
-    assert_eq!(unfilter(&scanlines, 2, 1, &mut out), Err(Error::InvalidFilterType(5)));
+    assert_eq!(
+        unfilter(&scanlines, 2, 1, &mut out),
+        Err(Error::InvalidFilterType(5))
+    );
 }

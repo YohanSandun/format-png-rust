@@ -29,7 +29,11 @@ fn sample(x: u32, y: u32, channel: u32, bit_depth: u8) -> u32 {
 /// The color generate.py's `palette()` gives pixel (x, y) of an indexed image.
 fn palette_color(x: u32, y: u32, bit_depth: u8) -> [u8; 3] {
     let i = (x + 3 * y) % (1 << bit_depth);
-    [(i * 67 % 256) as u8, (i * 131 % 256) as u8, (i * 199 % 256) as u8]
+    [
+        (i * 67 % 256) as u8,
+        (i * 131 % 256) as u8,
+        (i * 199 % 256) as u8,
+    ]
 }
 
 /// The conversion rules from `Image::to_bitmap`, for one sample.
@@ -57,7 +61,10 @@ fn trns_of(path: &Path) -> Option<Trns> {
         "indexed_8_trns.png" => Some(Trns::Alpha((0..=255).step_by(2).collect())),
         "indexed_2_trns.png" => Some(Trns::Alpha(vec![0, 85, 170])),
         other => {
-            assert!(!other.contains("_trns"), "{other}: add its tRNS chunk to trns_of");
+            assert!(
+                !other.contains("_trns"),
+                "{other}: add its tRNS chunk to trns_of"
+            );
             None
         }
     }
@@ -73,10 +80,17 @@ fn expected_rgba(header: &ImageHeader, trns: Option<&Trns>, x: u32, y: u32) -> [
 
     match (header.color_type, trns) {
         (ColorType::Grayscale, None) => [s(0), s(0), s(0), 255],
-        (ColorType::Grayscale, Some(Trns::Gray(key))) => [s(0), s(0), s(0), key_alpha(raw(0) == *key)],
+        (ColorType::Grayscale, Some(Trns::Gray(key))) => {
+            [s(0), s(0), s(0), key_alpha(raw(0) == *key)]
+        }
         (ColorType::GrayscaleAlpha, None) => [s(0), s(0), s(0), s(1)],
         (ColorType::Rgb, None) => [s(0), s(1), s(2), 255],
-        (ColorType::Rgb, Some(Trns::Rgb(key))) => [s(0), s(1), s(2), key_alpha([raw(0), raw(1), raw(2)] == *key)],
+        (ColorType::Rgb, Some(Trns::Rgb(key))) => [
+            s(0),
+            s(1),
+            s(2),
+            key_alpha([raw(0), raw(1), raw(2)] == *key),
+        ],
         (ColorType::Rgba, None) => [s(0), s(1), s(2), s(3)],
         (ColorType::Indexed, trns) => {
             let [r, g, b] = palette_color(x, y, depth);
@@ -118,20 +132,35 @@ fn convertible_fixtures() -> impl Iterator<Item = (PathBuf, Vec<u8>, ImageHeader
 #[test]
 fn every_fixture_converts_to_rgba8() {
     for (path, data, header) in convertible_fixtures() {
-        let bitmap = format_png::decode_rgba8(&data).unwrap_or_else(|e| panic!("{}: {e}", name(&path)));
+        let bitmap =
+            format_png::decode_rgba8(&data).unwrap_or_else(|e| panic!("{}: {e}", name(&path)));
 
         assert_eq!(bitmap.format(), PixelFormat::Rgba8);
-        assert_eq!((bitmap.width(), bitmap.height()), (header.width, header.height));
-        assert_eq!(bitmap.data(), expected(&path, &header, PixelFormat::Rgba8), "{}", name(&path));
+        assert_eq!(
+            (bitmap.width(), bitmap.height()),
+            (header.width, header.height)
+        );
+        assert_eq!(
+            bitmap.data(),
+            expected(&path, &header, PixelFormat::Rgba8),
+            "{}",
+            name(&path)
+        );
     }
 }
 
 #[test]
 fn every_fixture_converts_to_rgb8() {
     for (path, data, header) in convertible_fixtures() {
-        let bitmap = format_png::decode_rgb8(&data).unwrap_or_else(|e| panic!("{}: {e}", name(&path)));
+        let bitmap =
+            format_png::decode_rgb8(&data).unwrap_or_else(|e| panic!("{}: {e}", name(&path)));
 
-        assert_eq!(bitmap.data(), expected(&path, &header, PixelFormat::Rgb8), "{}", name(&path));
+        assert_eq!(
+            bitmap.data(),
+            expected(&path, &header, PixelFormat::Rgb8),
+            "{}",
+            name(&path)
+        );
     }
 }
 
@@ -141,8 +170,18 @@ fn rgba8_bitmaps_fit_canvas_image_data() {
     for (path, data, header) in convertible_fixtures() {
         let bitmap = format_png::decode_rgba8(&data).unwrap();
 
-        assert_eq!(bitmap.stride(), header.width as usize * 4, "{}", name(&path));
-        assert_eq!(bitmap.data().len(), bitmap.stride() * header.height as usize, "{}", name(&path));
+        assert_eq!(
+            bitmap.stride(),
+            header.width as usize * 4,
+            "{}",
+            name(&path)
+        );
+        assert_eq!(
+            bitmap.data().len(),
+            bitmap.stride() * header.height as usize,
+            "{}",
+            name(&path)
+        );
     }
 }
 
@@ -152,16 +191,25 @@ fn reused_decoder_matches_the_simple_api() {
     let mut out = Vec::new();
 
     for (path, data, _) in convertible_fixtures() {
-        decoder.decode_bitmap_into(&data, PixelFormat::Rgba8, &mut out).unwrap();
+        decoder
+            .decode_bitmap_into(&data, PixelFormat::Rgba8, &mut out)
+            .unwrap();
 
-        assert_eq!(out, format_png::decode_rgba8(&data).unwrap().into_data(), "{}", name(&path));
+        assert_eq!(
+            out,
+            format_png::decode_rgba8(&data).unwrap().into_data(),
+            "{}",
+            name(&path)
+        );
     }
 }
 
 #[test]
 fn indexed_fixtures_are_converted() {
     // Guards against the loops above quietly skipping every indexed fixture.
-    let indexed = convertible_fixtures().filter(|(_, _, header)| header.color_type == ColorType::Indexed).count();
+    let indexed = convertible_fixtures()
+        .filter(|(_, _, header)| header.color_type == ColorType::Indexed)
+        .count();
 
     assert_eq!(indexed, 10);
 }
@@ -175,20 +223,33 @@ fn trns_fixtures_have_transparent_pixels() {
         let bitmap = format_png::decode_rgba8(&data).unwrap();
         trns += 1;
 
-        assert!(bitmap.data().as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0), "{}", name(&path));
+        assert!(
+            bitmap
+                .data()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[3] == 0),
+            "{}",
+            name(&path)
+        );
     }
     assert_eq!(trns, 6);
 }
 
 #[test]
 fn index_past_the_palette_fails_to_convert() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/invalid/indexed_index_out_of_range.png");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/invalid/indexed_index_out_of_range.png");
     let data = fs::read(path).unwrap();
 
     // The indices decode; only converting them to colors fails.
     assert!(format_png::decode(&data).is_ok());
     assert_eq!(
         format_png::decode_rgba8(&data),
-        Err(Error::PaletteIndexOutOfRange { index: 16, entries: 16 })
+        Err(Error::PaletteIndexOutOfRange {
+            index: 16,
+            entries: 16
+        })
     );
 }

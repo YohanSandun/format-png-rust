@@ -9,13 +9,21 @@ fn parse_reads_every_field() {
     // BT.2100 PQ, full range: the usual HDR PNG.
     assert_eq!(
         CodingIndependentCodePoints::parse(&[9, 16, 0, 1]),
-        Ok(CodingIndependentCodePoints { color_primaries: 9, transfer_function: 16, matrix_coefficients: 0, full_range: true })
+        Ok(CodingIndependentCodePoints {
+            color_primaries: 9,
+            transfer_function: 16,
+            matrix_coefficients: 0,
+            full_range: true
+        })
     );
 }
 
 #[test]
 fn parse_reads_narrow_range() {
-    assert_eq!(CodingIndependentCodePoints::parse(&[1, 13, 0, 0]).map(|c| c.full_range), Ok(false));
+    assert_eq!(
+        CodingIndependentCodePoints::parse(&[1, 13, 0, 0]).map(|c| c.full_range),
+        Ok(false)
+    );
 }
 
 #[test]
@@ -37,7 +45,10 @@ fn parse_rejects_matrix_coefficients_other_than_rgb() {
 
 #[test]
 fn parse_rejects_full_range_flags_other_than_0_or_1() {
-    assert_eq!(CodingIndependentCodePoints::parse(&[9, 16, 0, 2]), Err(Error::InvalidChunkData(ChunkType::CICP)));
+    assert_eq!(
+        CodingIndependentCodePoints::parse(&[9, 16, 0, 2]),
+        Err(Error::InvalidChunkData(ChunkType::CICP))
+    );
 }
 
 #[test]
@@ -45,7 +56,10 @@ fn parse_rejects_other_lengths() {
     for length in [0, 3, 5] {
         assert_eq!(
             CodingIndependentCodePoints::parse(&vec![0; length]),
-            Err(Error::InvalidChunkLength { chunk_type: ChunkType::CICP, length }),
+            Err(Error::InvalidChunkLength {
+                chunk_type: ChunkType::CICP,
+                length
+            }),
             "{length} bytes"
         );
     }
