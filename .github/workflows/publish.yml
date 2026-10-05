@@ -5,13 +5,17 @@ name: Publish
 #   git tag v0.1.0
 #   git push origin v0.1.0
 #
-# Needs a `CARGO_REGISTRY_TOKEN` secret: a crates.io API token with the
-# publish-update scope (and publish-new for the first release), added under
-# Settings > Secrets and variables > Actions.
+# Uses crates.io trusted publishing: this workflow is registered with the crate
+# on crates.io, and exchanges GitHub's identity token for a short-lived
+# crates.io token, so no API token is stored in the repository.
+#
+# Running it by hand (Actions > Publish > Run workflow) is always a dry run: it
+# does everything but the upload, to check the workflow before a release.
 
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,10 +25,15 @@ env:
 
 jobs:
   publish:
-    name: Publish to crates.io
+    name: ${{ github.event_name == 'push' && 'Publish to crates.io' || 'Publish dry run' }}
     runs-on: ubuntu-latest
     # Settings > Environments > crates-io can require an approval before this runs.
+    # If the trusted publisher on crates.io names an environment, it must be this one.
     environment: crates-io
+    permissions:
+      contents: read
+      # Lets the job request the identity token that trusted publishing needs.
+      id-token: write
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -32,6 +41,7 @@ jobs:
           components: clippy
 
       - name: Check the tag matches the crate version
+        if: github.event_name == 'push'
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
@@ -42,6 +52,17 @@ jobs:
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
 
-      - run: cargo publish
+      - name: Get a crates.io token
+        if: github.event_name == 'push'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        if: github.event_name == 'push'
+        run: cargo publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Publish (dry run)
+        if: github.event_name != 'push'
+        run: cargo publish --dry-run

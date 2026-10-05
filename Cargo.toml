@@ -1,6 +1,6 @@
 [package]
 name = "format-png"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A PNG decoder and encoder in pure Rust: every color type, bit depth and interlacing, metadata, raw chunk access, and smaller files."

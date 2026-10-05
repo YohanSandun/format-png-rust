@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Getters and `with_` builder methods are `#[must_use]`, so ignoring their
+  result is a warning. This catches calls like `image.with_palette(&palette);`
+  that have no effect: `ImageRef` is `Copy`, so the result has to be used.
+- Badges for crates.io, docs.rs, CI and the license in the README.
+- The published crate no longer includes the `.github` folder.
+
 ## 0.1.0
 
 The first release.
