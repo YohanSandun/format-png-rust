@@ -66,3 +66,21 @@ fn trns_fixtures_keep_their_transparency() {
         assert_eq!(again.data(), original.data(), "{}", path.display());
     }
 }
+
+#[test]
+fn metadata_fixtures_keep_their_metadata() {
+    let options = DecodeOptions { preserve_metadata: true, strict_ancillary: true, ..DecodeOptions::default() };
+    let mut decoder = Decoder::with_options(options);
+    let mut encoder = format_png::Encoder::new();
+
+    for name in ["metadata.png", "ancillary_chunks.png", "ancillary_after_idat.png"] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/valid").join(name);
+        let original = decoder.decode(&fs::read(&path).unwrap()).unwrap();
+        assert!(!original.metadata().is_empty(), "{name}");
+
+        let again = decoder.decode(&encoder.encode(ImageRef::from(&original)).unwrap()).unwrap();
+
+        assert_eq!(again.metadata(), original.metadata(), "{name}");
+        assert_eq!(again.data(), original.data(), "{name}");
+    }
+}

@@ -10,7 +10,8 @@
 //! 3. The filtered rows are zlib-compressed into one stream.
 //! 4. `chunk_writer` writes the signature, `IHDR`, `PLTE` if there is a palette,
 //!    `tRNS` if there is transparency, the stream as one or more `IDAT` chunks,
-//!    and `IEND`.
+//!    and `IEND`. `metadata` writes the metadata chunks around `PLTE`, in the
+//!    order its docs give.
 //!
 //! To support a new chunk: add a field and a `with_` method to [`ImageRef`], and
 //! write it in `Encoder::encode_into` at the position the spec gives it.
@@ -20,6 +21,7 @@ mod encoder;
 mod filter;
 mod image_ref;
 mod interlace;
+mod metadata;
 mod options;
 
 pub use encoder::Encoder;

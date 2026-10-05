@@ -10,6 +10,7 @@ use super::options::EncodeOptions;
 use crate::error::Error;
 use crate::png::{ChunkType, Palette, Transparency};
 use crate::{ColorType, ImageHeader};
+use crate::encode::metadata::{validate_metadata, write_metadata_after_palette, write_metadata_before_palette};
 
 /// A reusable PNG encoder.
 ///
@@ -25,7 +26,11 @@ use crate::{ColorType, ImageHeader};
 /// The image is interlaced if its header says
 /// [`Interlace::Adam7`](crate::Interlace::Adam7).
 ///
-/// Not supported yet: metadata and other ancillary chunks.
+/// Metadata chunks are written around `PLTE`, in the order the spec allows;
+/// see [`ImageRef::with_metadata`].
+///
+/// Not supported yet: writing back other ancillary chunks, such as the raw
+/// ones kept by [`DecodeOptions::preserve_chunks`](crate::DecodeOptions::preserve_chunks).
 #[derive(Debug)]
 pub struct Encoder {
     options: EncodeOptions,
@@ -94,22 +99,24 @@ impl Encoder {
 
         let header = image.header();
 
+        let compression = CompressionOptions::new()
+            .level(self.options.compression)
+            .strategy(self.options.compression_strategy);
+
         filter_image(
             self.options.filter,
             header,
             image.data(),
             &mut self.scanlines,
         )?;
-        self.compressor.compress_zlib_into_with(
-            &self.scanlines,
-            &mut self.compressed,
-            CompressionOptions::new()
-                .level(self.options.compression)
-                .strategy(self.options.compression_strategy),
-        );
+        self.compressor.compress_zlib_into_with(&self.scanlines, &mut self.compressed, compression);
 
         write_signature(out);
         write_chunk(out, ChunkType::IHDR, &header_data(header));
+
+        if let Some(metadata) = image.metadata() {
+            write_metadata_before_palette(out, metadata, &mut self.compressor, compression);
+        }
 
         if let Some(palette) = image.palette() {
             write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());
@@ -117,6 +124,10 @@ impl Encoder {
 
         if let Some(transparency) = image.transparency() {
             write_chunk(out, ChunkType::TRNS, &transparency_data(transparency));
+        }
+
+        if let Some(metadata) = image.metadata() {
+            write_metadata_after_palette(out, metadata, &mut self.compressor, compression);
         }
 
         write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
@@ -167,6 +178,10 @@ fn validate(image: &ImageRef<'_>) -> Result<(), Error> {
 
     if let Some(transparency) = image.transparency() {
         validate_transparency(header, image.palette(), transparency)?;
+    }
+
+    if let Some(metadata) = image.metadata() {
+        validate_metadata(metadata)?;
     }
 
     Ok(())

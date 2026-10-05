@@ -1,7 +1,8 @@
 #![cfg(test)]
 
 use super::ImageRef;
-use crate::png::{ColorType, ImageHeader, Interlace, Palette, Transparency};
+use crate::png::metadata::{Text, TextKind};
+use crate::png::{ColorType, ImageHeader, Interlace, Metadata, Palette, Transparency};
 
 fn header(color_type: ColorType) -> ImageHeader {
     ImageHeader { width: 2, height: 1, bit_depth: 8, color_type, interlace: Interlace::None }
@@ -63,4 +64,38 @@ fn from_image_keeps_transparency() {
         assert!(image.transparency().is_some(), "{name}");
         assert_eq!(image_ref.transparency(), image.transparency(), "{name}");
     }
+}
+
+#[test]
+fn new_has_no_metadata() {
+    assert_eq!(ImageRef::new(header(ColorType::Rgb), &[0; 6]).metadata(), None);
+}
+
+#[test]
+fn with_metadata_adds_it() {
+    let title = Text {
+        keyword: "Title".to_string(),
+        text: "x".to_string(),
+        language_tag: String::new(),
+        translated_keyword: String::new(),
+        kind: TextKind::Plain,
+    };
+    let metadata = Metadata::default().with_text(title);
+
+    let image = ImageRef::new(header(ColorType::Rgb), &[0; 6]).with_metadata(&metadata);
+
+    assert_eq!(image.metadata(), Some(&metadata));
+}
+
+#[test]
+fn from_image_keeps_metadata_when_it_was_decoded() {
+    let data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/valid/metadata.png")).unwrap();
+    let options = crate::DecodeOptions { preserve_metadata: true, ..crate::DecodeOptions::default() };
+
+    let with = crate::Decoder::with_options(options).decode(&data).unwrap();
+    let without = crate::decode(&data).unwrap();
+
+    assert!(!with.metadata().is_empty());
+    assert_eq!(ImageRef::from(&with).metadata(), Some(with.metadata()));
+    assert_eq!(ImageRef::from(&without).metadata(), None);
 }

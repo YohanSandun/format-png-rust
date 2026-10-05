@@ -1,4 +1,4 @@
-use crate::png::{Image, ImageHeader, Palette, Transparency};
+use crate::png::{Image, ImageHeader, Metadata, Palette, Transparency};
 
 /// An image to encode: its header, its pixels in the PNG's own format, and the
 /// chunks that go with them. Everything is borrowed, so nothing is copied.
@@ -24,12 +24,13 @@ pub struct ImageRef<'a> {
     data: &'a [u8],
     palette: Option<&'a Palette>,
     transparency: Option<&'a Transparency>,
+    metadata: Option<&'a Metadata>,
 }
 
 impl<'a> ImageRef<'a> {
     /// An image with `header` and the pixels in `data`, and no other chunks.
     pub fn new(header: ImageHeader, data: &'a [u8]) -> Self {
-        Self { header, data, palette: None, transparency: None }
+        Self { header, data, palette: None, transparency: None, metadata: None }
     }
 
     /// Adds a `PLTE` chunk. Indexed images need one. RGB and RGBA images may
@@ -44,6 +45,13 @@ impl<'a> ImageRef<'a> {
     /// with an alpha channel must not have one.
     pub fn with_transparency(mut self, transparency: &'a Transparency) -> Self {
         self.transparency = Some(transparency);
+        self
+    }
+
+    /// Adds the metadata chunks: color space, physical size, time, text, ICC
+    /// profile and Exif; see [`Metadata`].
+    pub fn with_metadata(mut self, metadata: &'a Metadata) -> Self {
+        self.metadata = Some(metadata);
         self
     }
 
@@ -66,12 +74,18 @@ impl<'a> ImageRef<'a> {
     pub fn transparency(&self) -> Option<&'a Transparency> {
         self.transparency
     }
+
+    /// The metadata, if it was added.
+    pub fn metadata(&self) -> Option<&'a Metadata> {
+        self.metadata
+    }
 }
 
-/// Re-encodes a decoded image, with its palette and transparency.
+/// Re-encodes a decoded image, with its palette, transparency and metadata. The
+/// metadata is only there if the image was decoded with
+/// [`DecodeOptions::preserve_metadata`](crate::DecodeOptions::preserve_metadata).
 ///
-/// TODO: carry over metadata and the preserved ancillary chunks once the
-/// encoder writes them.
+/// TODO: carry over the preserved ancillary chunks once the encoder writes them.
 impl<'a> From<&'a Image> for ImageRef<'a> {
     fn from(image: &'a Image) -> Self {
         let mut image_ref = ImageRef::new(*image.header(), image.data());
@@ -80,6 +94,9 @@ impl<'a> From<&'a Image> for ImageRef<'a> {
         }
         if let Some(transparency) = image.transparency() {
             image_ref = image_ref.with_transparency(transparency);
+        }
+        if !image.metadata().is_empty() {
+            image_ref = image_ref.with_metadata(image.metadata());
         }
         image_ref
     }

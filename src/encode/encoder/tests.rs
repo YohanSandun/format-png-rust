@@ -6,8 +6,9 @@ use super::Encoder;
 use crate::encode::image_ref::ImageRef;
 use crate::encode::options::{EncodeOptions, FilterStrategy};
 use crate::error::Error;
-use crate::png::{ChunkType, ColorType, FilterType, Image, ImageHeader, Interlace, Palette, PaletteAlpha, Transparency};
-use crate::{ChunkReader, Decoder};
+use crate::png::metadata::{Gamma, PhysicalDimensions, RenderingIntent, Text, TextKind, Time, Unit};
+use crate::png::{ChunkType, ColorType, FilterType, Image, ImageHeader, Interlace, Metadata, Palette, PaletteAlpha, Transparency};
+use crate::{ChunkReader, DecodeOptions, Decoder};
 
 /// Every color type with every bit depth it allows.
 const FORMATS: [(ColorType, u8); 15] = [
@@ -490,4 +491,94 @@ fn palette_alpha_must_not_outnumber_the_palette() {
         Encoder::new().encode(ImageRef::new(header, &[0, 1, 1, 0]).with_palette(&palette).with_transparency(&transparency)),
         Err(Error::TooManyTransparencyEntries { entries: 3, palette_entries: 2 })
     );
+}
+
+// ---------- metadata ----------
+
+fn title(text: &str, kind: TextKind) -> Text {
+    Text { keyword: "Title".to_string(), text: text.to_string(), language_tag: String::new(), translated_keyword: String::new(), kind }
+}
+
+/// A chunk of every kind that goes before `PLTE`, and of every kind that goes after.
+fn some_metadata() -> Metadata {
+    Metadata::default()
+        .with_srgb(RenderingIntent::Perceptual)
+        .with_gamma(Gamma::parse(&45455u32.to_be_bytes()).unwrap())
+        .with_physical_dimensions(PhysicalDimensions { x: 3780, y: 3780, unit: Unit::Meter })
+        .with_time(Time { year: 2026, month: 10, day: 3, hour: 9, minute: 30, second: 0 })
+        .with_text(title("format-png", TextKind::Plain))
+        .with_text(title("compressed", TextKind::Compressed))
+        .with_text(title("blåbær", TextKind::International { compressed: true }))
+}
+
+fn decode_with_metadata(png: &[u8]) -> Image {
+    let options = DecodeOptions { preserve_metadata: true, strict_ancillary: true, ..DecodeOptions::default() };
+    Decoder::with_options(options).decode(png).unwrap()
+}
+
+#[test]
+fn metadata_round_trips_through_the_decoder() {
+    let header = header(13, 7, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let metadata = some_metadata();
+
+    let decoded = decode_with_metadata(&Encoder::new().encode(ImageRef::new(header, &data).with_metadata(&metadata)).unwrap());
+
+    assert_eq!(decoded.metadata(), &metadata);
+    assert_eq!(decoded.data(), data);
+}
+
+#[test]
+fn metadata_chunks_go_around_plte_and_trns() {
+    let header = header(4, 4, 2, ColorType::Indexed);
+    let data = pixels(&header);
+    let palette = full_palette(2);
+    let transparency = Transparency::Palette(PaletteAlpha::from_values(&[0]).unwrap());
+    let metadata = some_metadata();
+
+    let png = Encoder::new()
+        .encode(ImageRef::new(header, &data).with_palette(&palette).with_transparency(&transparency).with_metadata(&metadata))
+        .unwrap();
+
+    assert_eq!(
+        chunk_types(&png),
+        ["IHDR", "sRGB", "gAMA", "PLTE", "tRNS", "pHYs", "tIME", "tEXt", "zTXt", "iTXt", "IDAT", "IEND"]
+    );
+}
+
+#[test]
+fn empty_metadata_writes_no_chunks() {
+    let header = header(4, 4, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let metadata = Metadata::default();
+
+    let png = Encoder::new().encode(ImageRef::new(header, &data).with_metadata(&metadata)).unwrap();
+
+    assert_eq!(chunk_types(&png), ["IHDR", "IDAT", "IEND"]);
+}
+
+#[test]
+fn invalid_metadata_is_rejected() {
+    let header = header(4, 4, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let metadata = Metadata::default().with_text(Text { keyword: " Title".to_string(), ..title("x", TextKind::Plain) });
+
+    assert_eq!(
+        Encoder::new().encode(ImageRef::new(header, &data).with_metadata(&metadata)),
+        Err(Error::InvalidChunkData(ChunkType::TEXT))
+    );
+}
+
+#[test]
+fn stored_compression_applies_to_compressed_text_too() {
+    let header = header(4, 4, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let long = "the same words again and again ".repeat(100);
+    let metadata = Metadata::default().with_text(title(&long, TextKind::Compressed));
+    let options = EncodeOptions { compression_strategy: CompressionStrategy::Stored, ..EncodeOptions::default() };
+
+    let png = Encoder::with_options(options).encode(ImageRef::new(header, &data).with_metadata(&metadata)).unwrap();
+
+    assert!(png.len() > long.len(), "{} bytes", png.len());
+    assert_eq!(decode_with_metadata(&png).metadata(), &metadata);
 }

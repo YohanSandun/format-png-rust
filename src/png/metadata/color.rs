@@ -24,6 +24,27 @@ impl Gamma {
         Ok(Gamma(value))
     }
 
+    /// Creates a gamma from its value times 100000, as `gAMA` stores it, for
+    /// encoding an image. 45455 means 1/2.2, the usual value.
+    ///
+    /// ```
+    /// use format_png::png::metadata::Gamma;
+    ///
+    /// let gamma = Gamma::new(45455)?;
+    /// assert_eq!(gamma.scaled(), 45455);
+    /// # Ok::<(), format_png::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidChunkData`] if `scaled` is 0, which isn't a valid gamma.
+    pub fn new(scaled: u32) -> Result<Self, Error> {
+        if scaled == 0 {
+            return Err(Error::InvalidChunkData(ChunkType::GAMA));
+        }
+        Ok(Gamma(scaled))
+    }
+
     /// The value as stored: the gamma times 100000. 45455 means 1/2.2.
     pub fn scaled(&self) -> u32 {
         self.0
