@@ -6,7 +6,9 @@ use super::chunk_writer::{
 };
 use super::filter::filter_image;
 use super::image_ref::ImageRef;
-use super::options::EncodeOptions;
+use super::options::{EncodeOptions, PaletteMode, StripChunks};
+use super::palettize::palettize;
+use super::strip::strip_metadata;
 use crate::error::Error;
 use crate::png::{ChunkType, Palette, Transparency};
 use crate::{ChunkPosition, ColorType, ImageHeader};
@@ -30,8 +32,11 @@ use crate::encode::metadata::{validate_metadata, write_metadata_after_palette, w
 /// Metadata chunks are written around `PLTE`, in the order the spec allows;
 /// see [`ImageRef::with_metadata`].
 ///
-/// Not supported yet: writing back other ancillary chunks, such as the raw
-/// ones kept by [`DecodeOptions::preserve_chunks`](crate::DecodeOptions::preserve_chunks).
+/// Extra chunks, such as the raw ones kept by
+/// [`DecodeOptions::preserve_chunks`](crate::DecodeOptions::preserve_chunks),
+/// are written at their positions; see [`ImageRef::with_chunks`].
+///
+/// With [`PaletteMode::Auto`], images with few colors are written as indexed color.
 #[derive(Debug)]
 pub struct Encoder {
     options: EncodeOptions,
@@ -40,6 +45,8 @@ pub struct Encoder {
     scanlines: Vec<u8>,
     /// The zlib stream, before it's split into `IDAT` chunks.
     compressed: Vec<u8>,
+    /// Palette indices, when `PaletteMode::Auto` converts an image.
+    indexed: Vec<u8>,
 }
 
 impl Encoder {
@@ -55,6 +62,7 @@ impl Encoder {
             compressor: Compressor::new(),
             scanlines: Vec::new(),
             compressed: Vec::new(),
+            indexed: Vec::new(),
         }
     }
 
@@ -92,7 +100,51 @@ impl Encoder {
     ///   entries than its bit depth can index.
     /// - [`Error::ImageTooLarge`] if the image doesn't fit in memory on this platform.
     pub fn encode_into(&mut self, image: ImageRef<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
+        let stripped_metadata;
+        let image = match self.options.strip {
+            StripChunks::Keep => image,
+            mode => {
+                stripped_metadata = image.metadata().map(|metadata| strip_metadata(metadata, mode));
+                // No extra chunks: neither mode keeps any.
+                let mut stripped = ImageRef::new(*image.header(), image.data());
+                // An indexed image needs its palette. Any other image's palette is
+                // only a suggestion that viewers ignore, so it goes too.
+                if let Some(palette) = image.palette().filter(|_| image.header().color_type == ColorType::Indexed) {
+                    stripped = stripped.with_palette(palette);
+                }
+                if let Some(transparency) = image.transparency() {
+                    stripped = stripped.with_transparency(transparency);
+                }
+                if let Some(metadata) = &stripped_metadata {
+                    stripped = stripped.with_metadata(metadata);
+                }
+                stripped
+            }
+        };
+
         validate(&image)?;
+
+        let palettized = match self.options.palette {
+            PaletteMode::Auto => palettize(image.header(), image.data(), image.transparency(), &mut self.indexed),
+            _ => None,
+        };
+        let image = match &palettized {
+            Some(palettized) => {
+                let mut indexed = ImageRef::new(palettized.header, &self.indexed)
+                    .with_palette(&palettized.palette)
+                    .with_chunks(image.chunks());
+                if let Some(transparency) = &palettized.transparency {
+                    indexed = indexed.with_transparency(transparency);
+                }
+                if let Some(metadata) = image.metadata() {
+                    indexed = indexed.with_metadata(metadata);
+                }
+                indexed
+            }
+            None => image,
+        };
+
+        let keep_unsafe = self.options.keep_unsafe_chunks && palettized.is_none();
 
         out.clear();
         self.scanlines.clear();
@@ -119,7 +171,7 @@ impl Encoder {
             write_metadata_before_palette(out, metadata, &mut self.compressor, compression);
         }
 
-        write_extra_chunks(out, &image, ChunkPosition::BeforePalette, self.options.keep_unsafe_chunks);
+        write_extra_chunks(out, &image, ChunkPosition::BeforePalette, keep_unsafe);
 
         if let Some(palette) = image.palette() {
             write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());
@@ -133,11 +185,11 @@ impl Encoder {
             write_metadata_after_palette(out, metadata, &mut self.compressor, compression);
         }
 
-        write_extra_chunks(out, &image, ChunkPosition::BeforeImageData, self.options.keep_unsafe_chunks);
+        write_extra_chunks(out, &image, ChunkPosition::BeforeImageData, keep_unsafe);
 
         write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
 
-        write_extra_chunks(out, &image, ChunkPosition::AfterImageData, self.options.keep_unsafe_chunks);
+        write_extra_chunks(out, &image, ChunkPosition::AfterImageData, keep_unsafe);
 
         write_chunk(out, ChunkType::IEND, &[]);
         Ok(())

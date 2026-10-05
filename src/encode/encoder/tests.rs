@@ -4,7 +4,7 @@ use rust_deflate::{CompressionLevel, Strategy as CompressionStrategy};
 
 use super::Encoder;
 use crate::encode::image_ref::ImageRef;
-use crate::encode::options::{EncodeOptions, FilterStrategy};
+use crate::encode::options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks};
 use crate::error::Error;
 use crate::png::metadata::{Gamma, PhysicalDimensions, RenderingIntent, Text, TextKind, Time, Unit};
 use crate::png::{
@@ -664,4 +664,282 @@ fn critical_extra_chunks_are_rejected() {
         Encoder::new().encode(ImageRef::new(header, &[0; 4]).with_chunks(&chunks)),
         Err(Error::UnexpectedCriticalChunk(ChunkType::from_bytes(*b"CuSt").unwrap()))
     );
+}
+
+// ---------- PaletteMode ----------
+
+fn auto_palette() -> EncodeOptions {
+    EncodeOptions { palette: PaletteMode::Auto, ..EncodeOptions::default() }
+}
+
+/// An 8-bit RGBA image using `colors` distinct colors in a pattern, some of
+/// them translucent.
+fn few_colors(width: u32, height: u32, colors: usize) -> (ImageHeader, Vec<u8>) {
+    let header = header(width, height, 8, ColorType::Rgba);
+    let data = (0..(width * height) as usize)
+        .flat_map(|i| {
+            let c = (i * 7 + i / width as usize) % colors;
+            // Distinct for every c below 65536.
+            [c as u8, (c >> 8) as u8, (c * 3) as u8, if c.is_multiple_of(3) { 128 } else { 255 }]
+        })
+        .collect();
+    (header, data)
+}
+
+#[test]
+fn default_keeps_the_color_type() {
+    let (header, data) = few_colors(8, 8, 4);
+
+    let png = Encoder::new().encode(ImageRef::new(header, &data)).unwrap();
+
+    assert_eq!(decode(&png).header().color_type, ColorType::Rgba);
+}
+
+#[test]
+fn auto_palette_writes_few_colors_as_indexed_with_the_same_pixels() {
+    let (header, data) = few_colors(13, 7, 10);
+
+    let indexed = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
+    let rgba = Encoder::new().encode(ImageRef::new(header, &data)).unwrap();
+
+    let decoded = decode(&indexed);
+    assert_eq!(decoded.header().color_type, ColorType::Indexed);
+    assert_eq!(decoded.header().bit_depth, 4);
+    assert_eq!(crate::decode_rgba8(&indexed).unwrap(), crate::decode_rgba8(&rgba).unwrap());
+    assert_eq!(chunk_types(&indexed), ["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
+}
+
+#[test]
+fn auto_palette_makes_few_color_images_smaller() {
+    let (header, data) = few_colors(64, 64, 4);
+
+    let indexed = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
+    let rgba = Encoder::new().encode(ImageRef::new(header, &data)).unwrap();
+
+    assert!(indexed.len() < rgba.len(), "indexed {} bytes, RGBA {} bytes", indexed.len(), rgba.len());
+}
+
+#[test]
+fn auto_palette_leaves_images_with_more_colors() {
+    let (header, data) = few_colors(20, 20, 257);
+
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
+
+    assert_eq!(decode(&png).header().color_type, ColorType::Rgba);
+    assert_eq!(decode(&png).data(), data);
+}
+
+#[test]
+fn auto_palette_leaves_other_color_types() {
+    for (color_type, bit_depth) in [(ColorType::Grayscale, 8), (ColorType::GrayscaleAlpha, 8), (ColorType::Rgb, 16)] {
+        let header = header(4, 4, bit_depth, color_type);
+        let data = pixels(&header);
+
+        let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
+
+        assert_eq!(*decode(&png).header(), header);
+    }
+}
+
+#[test]
+fn auto_palette_keeps_interlacing() {
+    let (mut header, data) = few_colors(13, 7, 5);
+    header.interlace = Interlace::Adam7;
+
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
+
+    let decoded = decode(&png);
+    assert_eq!((decoded.header().color_type, decoded.header().interlace), (ColorType::Indexed, Interlace::Adam7));
+    assert_eq!(crate::decode_rgba8(&png).unwrap().data(), data);
+}
+
+#[test]
+fn auto_palette_turns_an_rgb_color_key_into_alpha() {
+    let header = header(2, 1, 8, ColorType::Rgb);
+    let key = Transparency::Rgb([5, 5, 5]);
+
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &[5, 5, 5, 6, 6, 6]).with_transparency(&key)).unwrap();
+
+    assert_eq!(decode(&png).header().color_type, ColorType::Indexed);
+    assert_eq!(crate::decode_rgba8(&png).unwrap().data(), [5, 5, 5, 0, 6, 6, 6, 255]);
+}
+
+#[test]
+fn auto_palette_replaces_a_suggested_palette() {
+    let header = header(2, 1, 8, ColorType::Rgb);
+    let suggested = full_palette(2);
+
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &[9, 9, 9, 8, 8, 8]).with_palette(&suggested)).unwrap();
+
+    assert_eq!(chunk_types(&png), ["IHDR", "PLTE", "IDAT", "IEND"]);
+    assert_eq!(decode(&png).palette().unwrap().colors(), [[9, 9, 9], [8, 8, 8]]);
+}
+
+#[test]
+fn auto_palette_drops_unsafe_chunks_only_when_it_converts() {
+    let options = EncodeOptions { keep_unsafe_chunks: true, ..auto_palette() };
+    let chunks = [extra(b"bKGD", &[0, 0, 0, 0, 0, 0], ChunkPosition::BeforeImageData), extra(b"ruSt", b"", ChunkPosition::BeforeImageData)];
+    let (few, few_data) = few_colors(4, 4, 3);
+    let (many, many_data) = few_colors(20, 20, 300);
+
+    let converted = Encoder::with_options(options.clone()).encode(ImageRef::new(few, &few_data).with_chunks(&chunks)).unwrap();
+    let kept = Encoder::with_options(options).encode(ImageRef::new(many, &many_data).with_chunks(&chunks)).unwrap();
+
+    assert!(!chunk_types(&converted).contains(&"bKGD".to_string()));
+    assert!(chunk_types(&converted).contains(&"ruSt".to_string()));
+    assert!(chunk_types(&kept).contains(&"bKGD".to_string()));
+}
+
+#[test]
+fn auto_palette_keeps_metadata() {
+    let (header, data) = few_colors(4, 4, 3);
+    let metadata = some_metadata();
+
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data).with_metadata(&metadata)).unwrap();
+
+    assert_eq!(decode_with_metadata(&png).metadata(), &metadata);
+}
+
+#[test]
+fn auto_palette_encoder_can_be_reused() {
+    let mut encoder = Encoder::with_options(auto_palette());
+    let mut out = Vec::new();
+
+    for (width, height, colors) in [(13, 7, 10), (20, 20, 300), (3, 3, 2), (64, 2, 256)] {
+        let (header, data) = few_colors(width, height, colors);
+
+        encoder.encode_into(ImageRef::new(header, &data), &mut out).unwrap();
+
+        assert_eq!(crate::decode_rgba8(&out).unwrap().data(), data, "{width}x{height}, {colors} colors");
+    }
+}
+
+// ---------- StripChunks ----------
+
+fn strip(strip: StripChunks) -> EncodeOptions {
+    EncodeOptions { strip, ..EncodeOptions::default() }
+}
+
+/// An RGB image with a `tRNS` color, metadata of every kind `some_metadata`
+/// has, and a private extra chunk, encoded with `options`.
+fn encode_with_everything(options: EncodeOptions) -> Vec<u8> {
+    let header = header(13, 7, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let transparency = Transparency::Rgb([0, 0, 0]);
+    let metadata = some_metadata();
+    let chunks = [extra(b"ruSt", b"private", ChunkPosition::BeforeImageData)];
+
+    Encoder::with_options(options)
+        .encode(ImageRef::new(header, &data).with_transparency(&transparency).with_metadata(&metadata).with_chunks(&chunks))
+        .unwrap()
+}
+
+#[test]
+fn keep_writes_every_chunk() {
+    assert_eq!(
+        chunk_types(&encode_with_everything(EncodeOptions::default())),
+        ["IHDR", "sRGB", "gAMA", "tRNS", "pHYs", "tIME", "tEXt", "zTXt", "iTXt", "ruSt", "IDAT", "IEND"]
+    );
+}
+
+#[test]
+fn safe_keeps_color_trns_and_physical_size() {
+    assert_eq!(chunk_types(&encode_with_everything(strip(StripChunks::Safe))), ["IHDR", "sRGB", "gAMA", "tRNS", "pHYs", "IDAT", "IEND"]);
+}
+
+#[test]
+fn all_keeps_only_trns() {
+    assert_eq!(chunk_types(&encode_with_everything(strip(StripChunks::All))), ["IHDR", "tRNS", "IDAT", "IEND"]);
+}
+
+#[test]
+fn stripping_keeps_the_pixels_and_shrinks_the_file() {
+    let kept = encode_with_everything(EncodeOptions::default());
+    let safe = encode_with_everything(strip(StripChunks::Safe));
+    let all = encode_with_everything(strip(StripChunks::All));
+
+    for png in [&safe, &all] {
+        assert_eq!(crate::decode_rgba8(png).unwrap(), crate::decode_rgba8(&kept).unwrap());
+    }
+    assert!(all.len() < safe.len() && safe.len() < kept.len(), "{} < {} < {}", all.len(), safe.len(), kept.len());
+}
+
+#[test]
+fn stripped_chunks_are_not_validated() {
+    let header = header(2, 2, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let bad_text = Metadata::default().with_text(Text { keyword: " bad".to_string(), ..title("x", TextKind::Plain) });
+    let critical = [extra(b"CuSt", b"", ChunkPosition::BeforeImageData)];
+    let image = ImageRef::new(header, &data).with_metadata(&bad_text).with_chunks(&critical);
+
+    assert_eq!(Encoder::new().encode(image), Err(Error::InvalidChunkData(ChunkType::TEXT)));
+    for mode in [StripChunks::Safe, StripChunks::All] {
+        assert!(Encoder::with_options(strip(mode)).encode(image).is_ok(), "{mode:?}");
+    }
+}
+
+#[test]
+fn kept_chunks_are_still_validated() {
+    let header = header(2, 2, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let bad_icc = Metadata::default().with_icc_profile(crate::png::metadata::IccProfile { name: String::new(), profile: vec![1] });
+
+    assert_eq!(
+        Encoder::with_options(strip(StripChunks::Safe)).encode(ImageRef::new(header, &data).with_metadata(&bad_icc)),
+        Err(Error::InvalidChunkData(ChunkType::ICCP))
+    );
+}
+
+#[test]
+fn stripping_works_with_auto_palette() {
+    let (header, data) = few_colors(13, 7, 5);
+    let metadata = some_metadata();
+    let options = EncodeOptions { strip: StripChunks::All, ..auto_palette() };
+
+    let png = Encoder::with_options(options).encode(ImageRef::new(header, &data).with_metadata(&metadata)).unwrap();
+
+    // tRNS here is the palette's alpha, which All keeps like any other tRNS.
+    assert_eq!(chunk_types(&png), ["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
+    assert_eq!(crate::decode_rgba8(&png).unwrap().data(), data);
+}
+
+#[test]
+fn stripping_drops_a_suggested_palette() {
+    let header = header(4, 4, 8, ColorType::Rgb);
+    let data = pixels(&header);
+    let suggested = full_palette(2);
+    let image = ImageRef::new(header, &data).with_palette(&suggested);
+
+    assert_eq!(chunk_types(&Encoder::new().encode(image).unwrap()), ["IHDR", "PLTE", "IDAT", "IEND"]);
+    for mode in [StripChunks::Safe, StripChunks::All] {
+        let png = Encoder::with_options(strip(mode)).encode(image).unwrap();
+
+        assert_eq!(chunk_types(&png), ["IHDR", "IDAT", "IEND"], "{mode:?}");
+        assert_eq!(decode(&png).data(), data, "{mode:?}");
+    }
+}
+
+#[test]
+fn stripping_keeps_an_indexed_images_palette() {
+    let header = header(4, 4, 2, ColorType::Indexed);
+    let data = pixels(&header);
+    let palette = full_palette(2);
+
+    for mode in [StripChunks::Safe, StripChunks::All] {
+        let png = Encoder::with_options(strip(mode)).encode(ImageRef::new(header, &data).with_palette(&palette)).unwrap();
+
+        assert_eq!(chunk_types(&png), ["IHDR", "PLTE", "IDAT", "IEND"], "{mode:?}");
+        assert_eq!(decode(&png).palette(), Some(&palette), "{mode:?}");
+    }
+}
+
+#[test]
+fn stripping_drops_a_suggested_palette_even_when_auto_palette_cannot_convert() {
+    let (header, data) = few_colors(20, 20, 300);
+    let suggested = full_palette(2);
+    let options = EncodeOptions { strip: StripChunks::All, ..auto_palette() };
+
+    let png = Encoder::with_options(options).encode(ImageRef::new(header, &data).with_palette(&suggested)).unwrap();
+
+    assert_eq!(chunk_types(&png), ["IHDR", "IDAT", "IEND"]);
 }

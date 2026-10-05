@@ -2,8 +2,12 @@
 //!
 //! The pipeline mirrors decoding in reverse:
 //!
-//! 1. `encoder::validate` checks the [`ImageRef`]: a valid header, pixel data
-//!    of the right length, and a palette where one is needed.
+//! 1. With [`StripChunks::Safe`] or [`StripChunks::All`], `strip` drops the
+//!    chunks the image doesn't keep. `encoder::validate` then checks the
+//!    [`ImageRef`]: a valid header, pixel data
+//!    of the right length, and a palette where one is needed. With
+//!    [`PaletteMode::Auto`], `palettize::palettize` then converts it to indexed
+//!    color if it has few enough colors.
 //! 2. `filter::filter_image` adds a filter type byte to each row and filters it,
 //!    as [`FilterStrategy`] says. Interlaced images are first split into their
 //!    seven Adam7 passes by `interlace::interlace_pass`, and each is filtered on its own.
@@ -25,7 +29,9 @@ mod image_ref;
 mod interlace;
 mod metadata;
 mod options;
+mod palettize;
+mod strip;
 
 pub use encoder::Encoder;
 pub use image_ref::ImageRef;
-pub use options::{EncodeOptions, FilterStrategy};
+pub use options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks};

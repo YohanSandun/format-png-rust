@@ -130,3 +130,36 @@ fn metadata_and_preserved_chunks_together_write_nothing_twice() {
     // skipped, and only ruSt comes from the preserved chunks.
     assert_eq!(chunk_types(&png), ["IHDR", "gAMA", "ruSt", "pHYs", "tEXt", "zTXt", "IDAT", "IEND"]);
 }
+
+#[test]
+fn every_valid_fixture_looks_the_same_with_auto_palette() {
+    let mut encoder = Encoder::with_options(EncodeOptions { palette: format_png::PaletteMode::Auto, ..EncodeOptions::default() });
+    let mut converted = 0;
+
+    for path in valid_fixtures() {
+        let data = fs::read(&path).unwrap();
+        let original = format_png::decode(&data).unwrap();
+
+        let png = encoder.encode(ImageRef::from(&original)).unwrap();
+
+        assert_eq!(format_png::decode_rgba8(&png).unwrap(), format_png::decode_rgba8(&data).unwrap(), "{}", path.display());
+        let header = format_png::read_header(&png).unwrap();
+        if header.color_type == format_png::ColorType::Indexed && original.header().color_type != format_png::ColorType::Indexed {
+            converted += 1;
+        }
+    }
+
+    assert!(converted > 0, "no fixture was converted");
+}
+
+#[test]
+fn stripping_a_fixture_leaves_only_what_it_needs() {
+    let everything = DecodeOptions { preserve_chunks: true, preserve_metadata: true, ..DecodeOptions::default() };
+
+    let all = reencode("metadata.png", everything.clone(), EncodeOptions { strip: format_png::StripChunks::All, ..EncodeOptions::default() });
+    let safe = reencode("metadata.png", everything, EncodeOptions { strip: format_png::StripChunks::Safe, ..EncodeOptions::default() });
+
+    assert_eq!(chunk_types(&all), ["IHDR", "IDAT", "IEND"]);
+    assert!(!chunk_types(&safe).contains(&"tIME".to_string()));
+    assert!(chunk_types(&safe).contains(&"sRGB".to_string()));
+}

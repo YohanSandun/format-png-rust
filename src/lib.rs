@@ -64,7 +64,7 @@ mod encode;
 mod error;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
-pub use encode::{EncodeOptions, Encoder, FilterStrategy, ImageRef};
+pub use encode::{EncodeOptions, Encoder, FilterStrategy, ImageRef, PaletteMode, StripChunks};
 pub use error::Error;
 pub use rust_deflate::CompressionLevel;
 /// Which kind of DEFLATE blocks the encoder writes; see
