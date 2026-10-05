@@ -135,6 +135,11 @@ pub enum Error {
     /// The pixel data given to the encoder isn't the size its header needs:
     /// `ImageHeader::image_size` bytes.
     InvalidImageDataLength { expected: usize, actual: usize },
+
+    /// A critical chunk was given to the encoder as an extra chunk. The encoder
+    /// writes `IHDR`, `PLTE`, `IDAT` and `IEND` itself, and can't write an
+    /// unknown critical chunk safely.
+    UnexpectedCriticalChunk(ChunkType),
 }
 
 impl fmt::Display for Error {
@@ -211,6 +216,9 @@ impl fmt::Display for Error {
             }
             Error::InvalidImageDataLength { expected, actual } => {
                 write!(f, "pixel data is {actual} bytes, expected {expected}")
+            }
+            Error::UnexpectedCriticalChunk(chunk_type) => {
+                write!(f, "{chunk_type} is a critical chunk and can't be written as an extra chunk")
             }
         }
     }

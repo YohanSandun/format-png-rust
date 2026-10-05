@@ -25,6 +25,14 @@ pub struct EncodeOptions {
 
     /// How to filter each row before compressing. [`FilterStrategy::Adaptive`] by default.
     pub filter: FilterStrategy,
+
+    /// Whether to write extra chunks that aren't safe to copy, such as `bKGD`
+    /// and `sBIT`: those with an uppercase fourth letter, whose data depends on
+    /// the image. Off by default, as the spec asks of editors that rewrite the
+    /// image data. Turn it on to keep them when the pixels, header and palette
+    /// are unchanged, as when re-encoding a decoded image, or to write your own.
+    /// See [`ImageRef::with_chunks`](crate::ImageRef::with_chunks).
+    pub keep_unsafe_chunks: bool,
 }
 
 impl Default for EncodeOptions {
@@ -33,6 +41,7 @@ impl Default for EncodeOptions {
             compression: CompressionLevel::MEDIUM,
             compression_strategy: CompressionStrategy::Dynamic,
             filter: FilterStrategy::Adaptive,
+            keep_unsafe_chunks: false,
         }
     }
 }

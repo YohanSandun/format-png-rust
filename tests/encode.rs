@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use format_png::{DecodeOptions, Decoder, Error, ImageRef};
+use format_png::{DecodeOptions, Decoder, EncodeOptions, Encoder, Error, ImageRef};
 
 fn valid_fixtures() -> Vec<std::path::PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/valid");
@@ -83,4 +83,50 @@ fn metadata_fixtures_keep_their_metadata() {
         assert_eq!(again.metadata(), original.metadata(), "{name}");
         assert_eq!(again.data(), original.data(), "{name}");
     }
+}
+
+fn chunk_types(png: &[u8]) -> Vec<String> {
+    format_png::read_chunks(png).unwrap().chunks().iter().map(|c| c.chunk_type().to_string()).collect()
+}
+
+fn reencode(name: &str, decode: DecodeOptions, encode: EncodeOptions) -> Vec<u8> {
+    let data = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/valid").join(name)).unwrap();
+    let image = Decoder::with_options(decode).decode(&data).unwrap();
+    Encoder::with_options(encode).encode(ImageRef::from(&image)).unwrap()
+}
+
+#[test]
+fn preserved_chunks_survive_a_round_trip() {
+    let chunks_only = DecodeOptions { preserve_chunks: true, ..DecodeOptions::default() };
+    let keep_unsafe = EncodeOptions { keep_unsafe_chunks: true, ..EncodeOptions::default() };
+
+    // gAMA isn't safe to copy, so it needs keep_unsafe_chunks.
+    assert_eq!(
+        chunk_types(&reencode("ancillary_chunks.png", chunks_only.clone(), EncodeOptions::default())),
+        ["IHDR", "pHYs", "tEXt", "zTXt", "ruSt", "IDAT", "IEND"]
+    );
+    assert_eq!(
+        chunk_types(&reencode("ancillary_chunks.png", chunks_only, keep_unsafe)),
+        ["IHDR", "gAMA", "pHYs", "tEXt", "zTXt", "ruSt", "IDAT", "IEND"]
+    );
+}
+
+#[test]
+fn preserved_chunks_after_the_image_data_stay_there() {
+    let chunks_only = DecodeOptions { preserve_chunks: true, ..DecodeOptions::default() };
+
+    let png = reencode("ancillary_after_idat.png", chunks_only, EncodeOptions::default());
+
+    assert_eq!(chunk_types(&png), ["IHDR", "IDAT", "tEXt", "IEND"]);
+}
+
+#[test]
+fn metadata_and_preserved_chunks_together_write_nothing_twice() {
+    let both = DecodeOptions { preserve_chunks: true, preserve_metadata: true, ..DecodeOptions::default() };
+
+    let png = reencode("ancillary_chunks.png", both, EncodeOptions::default());
+
+    // Metadata writes gAMA, pHYs and the text; the raw copies of those are
+    // skipped, and only ruSt comes from the preserved chunks.
+    assert_eq!(chunk_types(&png), ["IHDR", "gAMA", "ruSt", "pHYs", "tEXt", "zTXt", "IDAT", "IEND"]);
 }

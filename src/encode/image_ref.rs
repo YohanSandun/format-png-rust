@@ -1,4 +1,4 @@
-use crate::png::{Image, ImageHeader, Metadata, Palette, Transparency};
+use crate::png::{Image, ImageHeader, Metadata, OwnedChunk, Palette, Transparency};
 
 /// An image to encode: its header, its pixels in the PNG's own format, and the
 /// chunks that go with them. Everything is borrowed, so nothing is copied.
@@ -25,12 +25,13 @@ pub struct ImageRef<'a> {
     palette: Option<&'a Palette>,
     transparency: Option<&'a Transparency>,
     metadata: Option<&'a Metadata>,
+    chunks: &'a [OwnedChunk],
 }
 
 impl<'a> ImageRef<'a> {
     /// An image with `header` and the pixels in `data`, and no other chunks.
     pub fn new(header: ImageHeader, data: &'a [u8]) -> Self {
-        Self { header, data, palette: None, transparency: None, metadata: None }
+        Self { header, data, palette: None, transparency: None, metadata: None, chunks: &[] }
     }
 
     /// Adds a `PLTE` chunk. Indexed images need one. RGB and RGBA images may
@@ -52,6 +53,20 @@ impl<'a> ImageRef<'a> {
     /// profile and Exif; see [`Metadata`].
     pub fn with_metadata(mut self, metadata: &'a Metadata) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    /// Adds extra chunks, written raw at their [`ChunkPosition`](crate::ChunkPosition)
+    /// in the order given: chunks kept by
+    /// [`DecodeOptions::preserve_chunks`](crate::DecodeOptions::preserve_chunks),
+    /// or your own from [`OwnedChunk::from_data`].
+    ///
+    /// Critical chunks are an error. Chunks that aren't safe to copy are skipped
+    /// unless [`EncodeOptions::keep_unsafe_chunks`](crate::EncodeOptions::keep_unsafe_chunks)
+    /// is set, and so are chunks of a type the encoder writes itself from the
+    /// transparency or metadata.
+    pub fn with_chunks(mut self, chunks: &'a [OwnedChunk]) -> Self {
+        self.chunks = chunks;
         self
     }
 
@@ -79,13 +94,17 @@ impl<'a> ImageRef<'a> {
     pub fn metadata(&self) -> Option<&'a Metadata> {
         self.metadata
     }
+
+    /// The extra chunks, empty unless some were added.
+    pub fn chunks(&self) -> &'a [OwnedChunk] {
+        self.chunks
+    }
 }
 
-/// Re-encodes a decoded image, with its palette, transparency and metadata. The
-/// metadata is only there if the image was decoded with
-/// [`DecodeOptions::preserve_metadata`](crate::DecodeOptions::preserve_metadata).
-///
-/// TODO: carry over the preserved ancillary chunks once the encoder writes them.
+/// Re-encodes a decoded image, with its palette, transparency, metadata and
+/// preserved chunks. The metadata and chunks are only there if the image was
+/// decoded with [`DecodeOptions::preserve_metadata`](crate::DecodeOptions::preserve_metadata)
+/// and [`DecodeOptions::preserve_chunks`](crate::DecodeOptions::preserve_chunks).
 impl<'a> From<&'a Image> for ImageRef<'a> {
     fn from(image: &'a Image) -> Self {
         let mut image_ref = ImageRef::new(*image.header(), image.data());
@@ -98,7 +117,7 @@ impl<'a> From<&'a Image> for ImageRef<'a> {
         if !image.metadata().is_empty() {
             image_ref = image_ref.with_metadata(image.metadata());
         }
-        image_ref
+        image_ref.with_chunks(image.ancillary_chunks())
     }
 }
 

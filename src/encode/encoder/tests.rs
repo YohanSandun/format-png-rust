@@ -7,7 +7,10 @@ use crate::encode::image_ref::ImageRef;
 use crate::encode::options::{EncodeOptions, FilterStrategy};
 use crate::error::Error;
 use crate::png::metadata::{Gamma, PhysicalDimensions, RenderingIntent, Text, TextKind, Time, Unit};
-use crate::png::{ChunkType, ColorType, FilterType, Image, ImageHeader, Interlace, Metadata, Palette, PaletteAlpha, Transparency};
+use crate::png::{
+    ChunkPosition, ChunkType, ColorType, FilterType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha,
+    Transparency,
+};
 use crate::{ChunkReader, DecodeOptions, Decoder};
 
 /// Every color type with every bit depth it allows.
@@ -134,7 +137,7 @@ fn every_option_round_trips() {
     for filter in filters {
         for compression in [CompressionLevel::NONE, CompressionLevel::FAST, CompressionLevel::MEDIUM, CompressionLevel::BEST] {
             for compression_strategy in [CompressionStrategy::Stored, CompressionStrategy::Fixed, CompressionStrategy::Dynamic] {
-                let mut encoder = Encoder::with_options(EncodeOptions { compression, compression_strategy, filter });
+                let mut encoder = Encoder::with_options(EncodeOptions { compression, compression_strategy, filter, ..EncodeOptions::default() });
 
                 let decoded = decode(&encoder.encode(ImageRef::new(header, &data)).unwrap());
 
@@ -581,4 +584,84 @@ fn stored_compression_applies_to_compressed_text_too() {
 
     assert!(png.len() > long.len(), "{} bytes", png.len());
     assert_eq!(decode_with_metadata(&png).metadata(), &metadata);
+}
+
+// ---------- extra chunks ----------
+
+fn extra(bytes: &[u8; 4], data: &[u8], position: ChunkPosition) -> OwnedChunk {
+    OwnedChunk::from_data(ChunkType::from_bytes(*bytes).unwrap(), data.to_vec(), position)
+}
+
+#[test]
+fn extra_chunks_go_at_their_positions() {
+    let header = header(4, 4, 2, ColorType::Indexed);
+    let data = pixels(&header);
+    let palette = full_palette(2);
+    let transparency = Transparency::Palette(PaletteAlpha::from_values(&[0]).unwrap());
+    let metadata = Metadata::default().with_srgb(RenderingIntent::Perceptual).with_text(title("x", TextKind::Plain));
+    let chunks = [
+        extra(b"afTr", b"", ChunkPosition::AfterImageData),
+        extra(b"miDl", b"", ChunkPosition::BeforeImageData),
+        extra(b"beFr", b"", ChunkPosition::BeforePalette),
+    ];
+
+    let png = Encoder::new()
+        .encode(
+            ImageRef::new(header, &data)
+                .with_palette(&palette)
+                .with_transparency(&transparency)
+                .with_metadata(&metadata)
+                .with_chunks(&chunks),
+        )
+        .unwrap();
+
+    assert_eq!(chunk_types(&png), ["IHDR", "sRGB", "beFr", "PLTE", "tRNS", "tEXt", "miDl", "IDAT", "afTr", "IEND"]);
+}
+
+#[test]
+fn extra_chunks_keep_their_order_and_data() {
+    let header = header(2, 2, 8, ColorType::Grayscale);
+    let chunks = [extra(b"onEa", b"first", ChunkPosition::AfterImageData), extra(b"twOa", b"second", ChunkPosition::AfterImageData)];
+
+    let png = Encoder::new().encode(ImageRef::new(header, &[0; 4]).with_chunks(&chunks)).unwrap();
+
+    let read = crate::read_chunks(&png).unwrap();
+    let unknown: Vec<_> = read.unknown_chunks().map(|c| (c.chunk_type().to_string(), c.data().to_vec())).collect();
+    assert_eq!(unknown, [("onEa".to_string(), b"first".to_vec()), ("twOa".to_string(), b"second".to_vec())]);
+}
+
+#[test]
+fn unsafe_extra_chunks_need_keep_unsafe_chunks() {
+    let header = header(2, 2, 8, ColorType::Grayscale);
+    let chunks = [extra(b"bKGD", &[0, 7], ChunkPosition::BeforeImageData), extra(b"ruSt", b"", ChunkPosition::BeforeImageData)];
+    let image = ImageRef::new(header, &[0; 4]).with_chunks(&chunks);
+
+    let default = Encoder::new().encode(image).unwrap();
+    let kept = Encoder::with_options(EncodeOptions { keep_unsafe_chunks: true, ..EncodeOptions::default() }).encode(image).unwrap();
+
+    assert_eq!(chunk_types(&default), ["IHDR", "ruSt", "IDAT", "IEND"]);
+    assert_eq!(chunk_types(&kept), ["IHDR", "bKGD", "ruSt", "IDAT", "IEND"]);
+}
+
+#[test]
+fn raw_chunks_of_types_the_encoder_writes_are_skipped() {
+    let header = header(2, 2, 8, ColorType::Grayscale);
+    let metadata = Metadata::default().with_text(title("typed", TextKind::Plain));
+    let chunks = [extra(b"tEXt", b"Title\0raw", ChunkPosition::BeforeImageData)];
+
+    let png = Encoder::new().encode(ImageRef::new(header, &[0; 4]).with_metadata(&metadata).with_chunks(&chunks)).unwrap();
+
+    assert_eq!(chunk_types(&png), ["IHDR", "tEXt", "IDAT", "IEND"]);
+    assert_eq!(decode_with_metadata(&png).metadata().text()[0].text, "typed");
+}
+
+#[test]
+fn critical_extra_chunks_are_rejected() {
+    let header = header(2, 2, 8, ColorType::Grayscale);
+    let chunks = [extra(b"CuSt", b"", ChunkPosition::BeforeImageData)];
+
+    assert_eq!(
+        Encoder::new().encode(ImageRef::new(header, &[0; 4]).with_chunks(&chunks)),
+        Err(Error::UnexpectedCriticalChunk(ChunkType::from_bytes(*b"CuSt").unwrap()))
+    );
 }

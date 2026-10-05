@@ -11,13 +11,15 @@
 //! 4. `chunk_writer` writes the signature, `IHDR`, `PLTE` if there is a palette,
 //!    `tRNS` if there is transparency, the stream as one or more `IDAT` chunks,
 //!    and `IEND`. `metadata` writes the metadata chunks around `PLTE`, in the
-//!    order its docs give.
+//!    order its docs give, and `extra_chunks` writes raw chunks at their
+//!    positions, by the rules its docs give.
 //!
 //! To support a new chunk: add a field and a `with_` method to [`ImageRef`], and
 //! write it in `Encoder::encode_into` at the position the spec gives it.
 
 mod chunk_writer;
 mod encoder;
+mod extra_chunks;
 mod filter;
 mod image_ref;
 mod interlace;

@@ -9,7 +9,8 @@ use super::image_ref::ImageRef;
 use super::options::EncodeOptions;
 use crate::error::Error;
 use crate::png::{ChunkType, Palette, Transparency};
-use crate::{ColorType, ImageHeader};
+use crate::{ChunkPosition, ColorType, ImageHeader};
+use crate::encode::extra_chunks::{validate_extra_chunks, write_extra_chunks};
 use crate::encode::metadata::{validate_metadata, write_metadata_after_palette, write_metadata_before_palette};
 
 /// A reusable PNG encoder.
@@ -118,6 +119,8 @@ impl Encoder {
             write_metadata_before_palette(out, metadata, &mut self.compressor, compression);
         }
 
+        write_extra_chunks(out, &image, ChunkPosition::BeforePalette, self.options.keep_unsafe_chunks);
+
         if let Some(palette) = image.palette() {
             write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());
         }
@@ -130,7 +133,12 @@ impl Encoder {
             write_metadata_after_palette(out, metadata, &mut self.compressor, compression);
         }
 
+        write_extra_chunks(out, &image, ChunkPosition::BeforeImageData, self.options.keep_unsafe_chunks);
+
         write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
+
+        write_extra_chunks(out, &image, ChunkPosition::AfterImageData, self.options.keep_unsafe_chunks);
+
         write_chunk(out, ChunkType::IEND, &[]);
         Ok(())
     }
@@ -183,6 +191,8 @@ fn validate(image: &ImageRef<'_>) -> Result<(), Error> {
     if let Some(metadata) = image.metadata() {
         validate_metadata(metadata)?;
     }
+
+    validate_extra_chunks(image.chunks())?;
 
     Ok(())
 }
