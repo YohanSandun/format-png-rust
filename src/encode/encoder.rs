@@ -15,6 +15,12 @@ use crate::{ChunkPosition, ColorType, ImageHeader};
 use crate::encode::extra_chunks::{validate_extra_chunks, write_extra_chunks};
 use crate::encode::metadata::{validate_metadata, write_metadata_after_palette, write_metadata_before_palette};
 
+/// The largest image data, in bytes, for which `PaletteMode::Auto` also
+/// encodes the image as given and keeps the smaller file: 64×64 RGBA. The
+/// palette's `PLTE` and `tRNS` chunks cost up to about 1 KB, so above this the
+/// converted image is smaller in practice, and encoding twice wouldn't pay.
+pub(crate) const AUTO_PALETTE_COMPARE_LIMIT: usize = 16 * 1024;
+
 /// A reusable PNG encoder.
 ///
 /// It owns a [`Compressor`] and its working buffers, and keeps them between
@@ -47,6 +53,9 @@ pub struct Encoder {
     compressed: Vec<u8>,
     /// Palette indices, when `PaletteMode::Auto` converts an image.
     indexed: Vec<u8>,
+    /// The PNG written as given, when `PaletteMode::Auto` compares it with the
+    /// converted one; see `AUTO_PALETTE_COMPARE_LIMIT`.
+    unconverted: Vec<u8>,
 }
 
 impl Encoder {
@@ -63,6 +72,7 @@ impl Encoder {
             scanlines: Vec::new(),
             compressed: Vec::new(),
             indexed: Vec::new(),
+            unconverted: Vec::new(),
         }
     }
 
@@ -124,28 +134,59 @@ impl Encoder {
 
         validate(&image)?;
 
+        // The converted image borrows this buffer while `write_png` borrows the
+        // encoder, so it's taken out for the call and put back after, even on error.
+        let mut indexed = std::mem::take(&mut self.indexed);
+        let result = self.encode_validated(image, &mut indexed, out);
+        self.indexed = indexed;
+        result
+    }
+
+    /// `encode_into` after stripping and validation: converts the image to
+    /// indexed color if `PaletteMode::Auto` can, with the indices in `indexed`,
+    /// and writes the smaller of the two for small images.
+    fn encode_validated(&mut self, image: ImageRef<'_>, indexed: &mut Vec<u8>, out: &mut Vec<u8>) -> Result<(), Error> {
         let palettized = match self.options.palette {
-            PaletteMode::Auto => palettize(image.header(), image.data(), image.transparency(), &mut self.indexed),
+            PaletteMode::Auto => palettize(image.header(), image.data(), image.transparency(), indexed),
             _ => None,
         };
-        let image = match &palettized {
-            Some(palettized) => {
-                let mut indexed = ImageRef::new(palettized.header, &self.indexed)
-                    .with_palette(&palettized.palette)
-                    .with_chunks(image.chunks());
-                if let Some(transparency) = &palettized.transparency {
-                    indexed = indexed.with_transparency(transparency);
-                }
-                if let Some(metadata) = image.metadata() {
-                    indexed = indexed.with_metadata(metadata);
-                }
-                indexed
-            }
-            None => image,
+        let Some(palettized) = palettized else {
+            return self.write_png(&image, self.options.keep_unsafe_chunks, out);
         };
 
-        let keep_unsafe = self.options.keep_unsafe_chunks && palettized.is_none();
+        let mut converted = ImageRef::new(palettized.header, indexed)
+            .with_palette(&palettized.palette)
+            .with_chunks(image.chunks());
+        if let Some(transparency) = &palettized.transparency {
+            converted = converted.with_transparency(transparency);
+        }
+        if let Some(metadata) = image.metadata() {
+            converted = converted.with_metadata(metadata);
+        }
+        // Unsafe-to-copy chunks describe the image as given; after a change of
+        // color type they'd be wrong.
+        self.write_png(&converted, false, out)?;
 
+        // The palette's chunks cost up to about 1 KB, which a small image may not
+        // win back. Encoding it again as given is cheap there, so keep whichever
+        // is smaller, and the image as given on a tie.
+        if image.data().len() <= AUTO_PALETTE_COMPARE_LIMIT {
+            let mut unconverted = std::mem::take(&mut self.unconverted);
+            let result = self.write_png(&image, self.options.keep_unsafe_chunks, &mut unconverted);
+            if result.is_ok() && unconverted.len() <= out.len() {
+                std::mem::swap(out, &mut unconverted);
+            }
+            self.unconverted = unconverted;
+            result?;
+        }
+
+        Ok(())
+    }
+
+    /// Filters, compresses and writes `image` as a PNG to `out`, replacing its
+    /// contents. `image` has been validated. `keep_unsafe` is
+    /// `EncodeOptions::keep_unsafe_chunks`, or `false` for a converted image.
+    fn write_png(&mut self, image: &ImageRef<'_>, keep_unsafe: bool, out: &mut Vec<u8>) -> Result<(), Error> {
         out.clear();
         self.scanlines.clear();
         self.compressed.clear();
@@ -171,7 +212,7 @@ impl Encoder {
             write_metadata_before_palette(out, metadata, &mut self.compressor, compression);
         }
 
-        write_extra_chunks(out, &image, ChunkPosition::BeforePalette, keep_unsafe);
+        write_extra_chunks(out, image, ChunkPosition::BeforePalette, keep_unsafe);
 
         if let Some(palette) = image.palette() {
             write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());
@@ -185,11 +226,11 @@ impl Encoder {
             write_metadata_after_palette(out, metadata, &mut self.compressor, compression);
         }
 
-        write_extra_chunks(out, &image, ChunkPosition::BeforeImageData, keep_unsafe);
+        write_extra_chunks(out, image, ChunkPosition::BeforeImageData, keep_unsafe);
 
         write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
 
-        write_extra_chunks(out, &image, ChunkPosition::AfterImageData, keep_unsafe);
+        write_extra_chunks(out, image, ChunkPosition::AfterImageData, keep_unsafe);
 
         write_chunk(out, ChunkType::IEND, &[]);
         Ok(())

@@ -93,6 +93,10 @@ pub enum PaletteMode {
     /// with more colors, and other color types, are encoded as they are.
     ///
     /// Logos, icons, screenshots and pixel art often get several times smaller.
+    /// Very small images may not: the palette costs up to about 1 KB in chunks,
+    /// which can be more than it saves. So images with at most 16 KiB of pixel
+    /// data, such as 64×64 RGBA, are encoded both ways and the smaller file is
+    /// kept, the image as given on a tie.
     /// The file's color type changes, though: [`decode`](crate::decode) gives
     /// palette indices back, while [`decode_rgba8`](crate::decode_rgba8) gives
     /// the same pixels as before.

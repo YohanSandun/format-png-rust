@@ -2,7 +2,7 @@
 
 use rust_deflate::{CompressionLevel, Strategy as CompressionStrategy};
 
-use super::Encoder;
+use super::{AUTO_PALETTE_COMPARE_LIMIT, Encoder};
 use crate::encode::image_ref::ImageRef;
 use crate::encode::options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks};
 use crate::error::Error;
@@ -668,6 +668,17 @@ fn critical_extra_chunks_are_rejected() {
 
 // ---------- PaletteMode ----------
 
+/// 80x60 RGBA: 19200 bytes, over `AUTO_PALETTE_COMPARE_LIMIT`, so `Auto`
+/// converts without comparing and the tests below see the conversion itself.
+const OVER_LIMIT: (u32, u32) = (80, 60);
+
+/// An 8-bit RGB image over `AUTO_PALETTE_COMPARE_LIMIT`, alternating `colors`.
+fn rgb_over_limit(colors: &[[u8; 3]]) -> (ImageHeader, Vec<u8>) {
+    let header = header(100, 60, 8, ColorType::Rgb);
+    let data = (0..100 * 60).flat_map(|i| colors[i % colors.len()]).collect();
+    (header, data)
+}
+
 fn auto_palette() -> EncodeOptions {
     EncodeOptions { palette: PaletteMode::Auto, ..EncodeOptions::default() }
 }
@@ -697,7 +708,7 @@ fn default_keeps_the_color_type() {
 
 #[test]
 fn auto_palette_writes_few_colors_as_indexed_with_the_same_pixels() {
-    let (header, data) = few_colors(13, 7, 10);
+    let (header, data) = few_colors(OVER_LIMIT.0, OVER_LIMIT.1, 10);
 
     let indexed = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
     let rgba = Encoder::new().encode(ImageRef::new(header, &data)).unwrap();
@@ -743,7 +754,7 @@ fn auto_palette_leaves_other_color_types() {
 
 #[test]
 fn auto_palette_keeps_interlacing() {
-    let (mut header, data) = few_colors(13, 7, 5);
+    let (mut header, data) = few_colors(OVER_LIMIT.0, OVER_LIMIT.1, 5);
     header.interlace = Interlace::Adam7;
 
     let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
@@ -755,21 +766,21 @@ fn auto_palette_keeps_interlacing() {
 
 #[test]
 fn auto_palette_turns_an_rgb_color_key_into_alpha() {
-    let header = header(2, 1, 8, ColorType::Rgb);
+    let (header, data) = rgb_over_limit(&[[5, 5, 5], [6, 6, 6]]);
     let key = Transparency::Rgb([5, 5, 5]);
 
-    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &[5, 5, 5, 6, 6, 6]).with_transparency(&key)).unwrap();
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data).with_transparency(&key)).unwrap();
 
     assert_eq!(decode(&png).header().color_type, ColorType::Indexed);
-    assert_eq!(crate::decode_rgba8(&png).unwrap().data(), [5, 5, 5, 0, 6, 6, 6, 255]);
+    assert_eq!(crate::decode_rgba8(&png).unwrap().data()[..8], [5, 5, 5, 0, 6, 6, 6, 255]);
 }
 
 #[test]
 fn auto_palette_replaces_a_suggested_palette() {
-    let header = header(2, 1, 8, ColorType::Rgb);
+    let (header, data) = rgb_over_limit(&[[9, 9, 9], [8, 8, 8]]);
     let suggested = full_palette(2);
 
-    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &[9, 9, 9, 8, 8, 8]).with_palette(&suggested)).unwrap();
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data).with_palette(&suggested)).unwrap();
 
     assert_eq!(chunk_types(&png), ["IHDR", "PLTE", "IDAT", "IEND"]);
     assert_eq!(decode(&png).palette().unwrap().colors(), [[9, 9, 9], [8, 8, 8]]);
@@ -779,7 +790,7 @@ fn auto_palette_replaces_a_suggested_palette() {
 fn auto_palette_drops_unsafe_chunks_only_when_it_converts() {
     let options = EncodeOptions { keep_unsafe_chunks: true, ..auto_palette() };
     let chunks = [extra(b"bKGD", &[0, 0, 0, 0, 0, 0], ChunkPosition::BeforeImageData), extra(b"ruSt", b"", ChunkPosition::BeforeImageData)];
-    let (few, few_data) = few_colors(4, 4, 3);
+    let (few, few_data) = few_colors(OVER_LIMIT.0, OVER_LIMIT.1, 3);
     let (many, many_data) = few_colors(20, 20, 300);
 
     let converted = Encoder::with_options(options.clone()).encode(ImageRef::new(few, &few_data).with_chunks(&chunks)).unwrap();
@@ -892,7 +903,7 @@ fn kept_chunks_are_still_validated() {
 
 #[test]
 fn stripping_works_with_auto_palette() {
-    let (header, data) = few_colors(13, 7, 5);
+    let (header, data) = few_colors(OVER_LIMIT.0, OVER_LIMIT.1, 5);
     let metadata = some_metadata();
     let options = EncodeOptions { strip: StripChunks::All, ..auto_palette() };
 
@@ -942,4 +953,74 @@ fn stripping_drops_a_suggested_palette_even_when_auto_palette_cannot_convert() {
     let png = Encoder::with_options(options).encode(ImageRef::new(header, &data).with_palette(&suggested)).unwrap();
 
     assert_eq!(chunk_types(&png), ["IHDR", "IDAT", "IEND"]);
+}
+
+// ---------- PaletteMode::Auto on small images ----------
+
+#[test]
+fn the_size_helpers_are_on_the_right_side_of_the_limit() {
+    let (over, _) = few_colors(OVER_LIMIT.0, OVER_LIMIT.1, 1);
+    let (rgb_over, _) = rgb_over_limit(&[[0; 3]]);
+
+    assert!(over.image_size().unwrap() > AUTO_PALETTE_COMPARE_LIMIT);
+    assert!(rgb_over.image_size().unwrap() > AUTO_PALETTE_COMPARE_LIMIT);
+    assert_eq!(header(64, 64, 8, ColorType::Rgba).image_size().unwrap(), AUTO_PALETTE_COMPARE_LIMIT);
+}
+
+#[test]
+fn auto_palette_keeps_a_tiny_image_as_given_when_the_palette_costs_more() {
+    // One opaque pixel: the RGBA data compresses to a few bytes, less than the
+    // 15-byte PLTE chunk that indexed color would add.
+    let header = header(1, 1, 8, ColorType::Rgba);
+    let data = [10, 20, 30, 255];
+
+    let auto = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
+    let as_given = Encoder::new().encode(ImageRef::new(header, &data)).unwrap();
+
+    assert_eq!(decode(&auto).header().color_type, ColorType::Rgba);
+    assert_eq!(auto, as_given);
+}
+
+#[test]
+fn auto_palette_still_converts_small_images_when_it_helps() {
+    // 64x64 RGBA in 4 colors, right at the limit: indexed is far smaller.
+    let (header, data) = few_colors(64, 64, 4);
+
+    let png = Encoder::with_options(auto_palette()).encode(ImageRef::new(header, &data)).unwrap();
+
+    assert_eq!(decode(&png).header().color_type, ColorType::Indexed);
+}
+
+#[test]
+fn auto_palette_is_never_bigger_than_the_image_as_given_for_small_images() {
+    let sizes = [(1, 1), (2, 1), (3, 3), (4, 4), (8, 8), (13, 7), (16, 16), (32, 32), (64, 64)];
+
+    for (width, height) in sizes {
+        for colors in [1, 2, 3, 5, 17, 256] {
+            let (header, data) = few_colors(width, height, colors);
+            let image = ImageRef::new(header, &data);
+
+            let auto = Encoder::with_options(auto_palette()).encode(image).unwrap();
+            let as_given = Encoder::new().encode(image).unwrap();
+
+            assert!(auto.len() <= as_given.len(), "{width}x{height}, {colors} colors: {} > {}", auto.len(), as_given.len());
+            assert_eq!(crate::decode_rgba8(&auto).unwrap().data(), data, "{width}x{height}, {colors} colors");
+        }
+    }
+}
+
+#[test]
+fn the_kept_file_is_complete_after_reusing_the_encoder() {
+    // Alternates images where each side wins, so a buffer swap gone wrong
+    // would show up as a file from the previous image.
+    let mut encoder = Encoder::with_options(auto_palette());
+    let mut out = Vec::new();
+
+    for (width, height, colors) in [(1, 1, 1), (64, 64, 4), (1, 1, 1), (80, 60, 3), (2, 2, 2)] {
+        let (header, data) = few_colors(width, height, colors);
+
+        encoder.encode_into(ImageRef::new(header, &data), &mut out).unwrap();
+
+        assert_eq!(crate::decode_rgba8(&out).unwrap().data(), data, "{width}x{height}");
+    }
 }
