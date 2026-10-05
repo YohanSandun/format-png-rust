@@ -2,12 +2,14 @@ use std::fmt;
 
 use crate::png::{ChunkType, ColorType};
 
-/// Everything that can go wrong while decoding a PNG.
+/// Everything that can go wrong while decoding or encoding a PNG.
 ///
-/// New variants will be added as more of the format is decoded, so matches on it
-/// need a wildcard arm.
+/// New variants will be added as more of the format is supported, so matches on
+/// it need a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+// Each variant's docs describe its fields.
+#[allow(missing_docs)]
 pub enum Error {
     /// The input ended unexpectedly.
     UnexpectedEndOfInput,
@@ -131,6 +133,15 @@ pub enum Error {
 
     /// A `zTXt` or `iTXt` chunk's text decompresses to more than `max_size` bytes.
     TextTooLong { chunk_type: ChunkType, max_size: usize },
+
+    /// The pixel data given to the encoder isn't the size its header needs:
+    /// `ImageHeader::image_size` bytes.
+    InvalidImageDataLength { expected: usize, actual: usize },
+
+    /// A critical chunk was given to the encoder as an extra chunk. The encoder
+    /// writes `IHDR`, `PLTE`, `IDAT` and `IEND` itself, and can't write an
+    /// unknown critical chunk safely.
+    UnexpectedCriticalChunk(ChunkType),
 }
 
 impl fmt::Display for Error {
@@ -204,6 +215,12 @@ impl fmt::Display for Error {
             Error::DuplicateChunk(chunk_type) => write!(f, "more than one {chunk_type} chunk"),
             Error::TextTooLong { chunk_type, max_size } => {
                 write!(f, "{chunk_type} text decompresses to more than {max_size} bytes")
+            }
+            Error::InvalidImageDataLength { expected, actual } => {
+                write!(f, "pixel data is {actual} bytes, expected {expected}")
+            }
+            Error::UnexpectedCriticalChunk(chunk_type) => {
+                write!(f, "{chunk_type} is a critical chunk and can't be written as an extra chunk")
             }
         }
     }

@@ -161,3 +161,37 @@ fn palette_alphas_with_the_same_values_are_equal() {
     // Same alpha for every index, but a different chunk.
     assert_ne!(PaletteAlpha::new(&[1, 2]), PaletteAlpha::new(&[1, 2, 255]));
 }
+
+// ---------- PaletteAlpha::from_values ----------
+
+#[test]
+fn from_values_keeps_the_values_in_order() {
+    let alpha = PaletteAlpha::from_values(&[0, 128]).unwrap();
+
+    assert_eq!(alpha.values(), [0, 128]);
+    assert_eq!((alpha.get(0), alpha.get(1), alpha.get(2)), (0, 128, 255));
+}
+
+#[test]
+fn from_values_accepts_1_to_256_values() {
+    assert!(PaletteAlpha::from_values(&[0]).is_ok());
+    assert_eq!(PaletteAlpha::from_values(&[7; 256]).map(|a| a.values().len()), Ok(256));
+}
+
+#[test]
+fn from_values_rejects_no_values_or_more_than_256() {
+    for length in [0, 257] {
+        assert_eq!(
+            PaletteAlpha::from_values(&vec![0; length]),
+            Err(Error::InvalidTransparencyLength { color_type: ColorType::Indexed, length }),
+            "{length} values"
+        );
+    }
+}
+
+#[test]
+fn from_values_equals_the_same_alpha_parsed() {
+    let parsed = parse_indexed(&[0, 128], 4).unwrap();
+
+    assert_eq!(Transparency::Palette(PaletteAlpha::from_values(&[0, 128]).unwrap()), parsed);
+}

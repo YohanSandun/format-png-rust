@@ -210,7 +210,9 @@ impl Decoder {
     /// contents are unspecified.
     ///
     /// Indexed images come back as palette indices; the palette is then available
-    /// from [`palette`](Self::palette). Ancillary chunks are skipped for now.
+    /// from [`palette`](Self::palette). Ancillary chunks are read only if
+    /// [`DecodeOptions::preserve_metadata`] or [`DecodeOptions::preserve_chunks`]
+    /// asks for them.
     ///
     /// # Errors
     ///

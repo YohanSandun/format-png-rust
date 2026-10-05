@@ -1,15 +1,17 @@
 # format-png
 
-A PNG decoder in Rust, with no `unsafe` code. It has a simple API for getting
-pixels on screen, and full control when you need it: reusable decoders and
-buffers for decoding many images, the image in its own pixel format, and every
-chunk of the file.
+A PNG decoder and encoder in pure Rust, with no `unsafe` code. It has a simple
+API for getting pixels on screen or into a file, and full control when you need
+it: reusable decoders and encoders for many images, the image in its own pixel
+format, every chunk of the file, and options to make files smaller.
 
-> **Status:** early development. Decoding works for every standard color type,
-> bit depth and interlacing method, including palettes and `tRNS` transparency.
-> Encoding isn't implemented yet. See [Not supported yet](#not-supported-yet).
+Both directions support every standard color type, bit depth and interlacing
+method, with palettes, `tRNS` transparency and metadata. See
+[Not supported yet](#not-supported-yet) for what's missing.
 
 ## Features
+
+### Decoding
 
 - Every color type (grayscale, RGB, indexed, grayscale + alpha, RGBA) and every
   bit depth the specification allows (1, 2, 4, 8 and 16)
@@ -27,16 +29,27 @@ chunk of the file.
 - Decompressed size capped at exactly what the header allows, so a small
   malicious file can't expand without limit
 
-## Installation
+### Encoding
 
-The crate isn't on crates.io yet. Add it from Git:
+- Every color type, bit depth and Adam7 interlacing
+- Adaptive or fixed row filters, and a choice of compression level and strategy
+- Palette, `tRNS`, every metadata chunk the decoder reads, and extra chunks:
+  raw ones kept from decoding, or your own
+- Lossless re-encoding of a decoded image, metadata and chunks included
+- Optional conversion of images with few colors to indexed color at the
+  smallest bit depth, which is often several times smaller
+- Optional stripping of ancillary chunks: all of them, or only those that don't
+  change how the image looks
+- Reusable `Encoder` that keeps its compressor and buffers between images
+
+## Installation
 
 ```toml
 [dependencies]
-format-png = { git = "https://github.com/YohanSandun/format-png-rust" }
+format-png = "0.1"
 ```
 
-The crate is imported as `format_png`.
+The crate is imported as `format_png`. It needs Rust 1.88 or later.
 
 ## Usage
 
@@ -198,6 +211,90 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 An invalid or misplaced ancillary chunk is skipped rather than failing the
 decode, as the PNG spec allows. Set `strict_ancillary` to get an error instead.
 
+### Encode RGBA pixels
+
+`encode_rgba8` is the reverse of `decode_rgba8`: 8-bit RGBA pixels, rows top to
+bottom with no padding, as a canvas's `ImageData` holds them.
+
+```rust,no_run
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (width, height) = (2, 1);
+    let pixels = [255, 0, 0, 255, 0, 0, 255, 128]; // red, then half-transparent blue
+
+    std::fs::write("out.png", format_png::encode_rgba8(width, height, &pixels)?)?;
+    Ok(())
+}
+```
+
+### Encode any format, with metadata
+
+`encode` takes an `ImageRef`: a header and pixels in the layout `Image::data`
+uses, so any color type and bit depth, plus the chunks to write.
+
+```rust,no_run
+use format_png::png::metadata::{PhysicalDimensions, Text, TextKind, Unit};
+use format_png::{ColorType, ImageHeader, ImageRef, Interlace, Metadata, Palette};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A 4x1 indexed image at 2 bits per pixel, using a 4-color palette.
+    let header = ImageHeader { width: 4, height: 1, bit_depth: 2, color_type: ColorType::Indexed, interlace: Interlace::None };
+    let palette = Palette::from_colors(&[[0, 0, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255]])?;
+    let pixels = [0b00_01_10_11]; // indices 0, 1, 2, 3
+
+    let metadata = Metadata::default()
+        .with_physical_dimensions(PhysicalDimensions { x: 2835, y: 2835, unit: Unit::Meter }) // 72 dpi
+        .with_text(Text {
+            keyword: "Title".to_string(),
+            text: "Four colors".to_string(),
+            language_tag: String::new(),
+            translated_keyword: String::new(),
+            kind: TextKind::Plain,
+        });
+
+    let image = ImageRef::new(header, &pixels).with_palette(&palette).with_metadata(&metadata);
+    std::fs::write("out.png", format_png::encode(image)?)?;
+    Ok(())
+}
+```
+
+`ImageRef::from(&image)` re-encodes a decoded `Image` with its palette and
+transparency, and also its metadata and chunks if it was decoded with
+`preserve_metadata` and `preserve_chunks`.
+
+### Make files smaller
+
+An `Encoder` takes options, and keeps its compressor and buffers between images:
+
+```rust,no_run
+use format_png::{CompressionLevel, EncodeOptions, Encoder, ImageRef, PaletteMode, StripChunks};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut encoder = Encoder::with_options(EncodeOptions {
+        compression: CompressionLevel::BEST,
+        palette: PaletteMode::Auto, // indexed color when it's lossless
+        strip: StripChunks::Safe,   // drop text, time, Exif and private chunks
+        ..EncodeOptions::default()
+    });
+    let mut out = Vec::new();
+
+    for path in ["a.png", "b.png"] {
+        let image = format_png::decode(&std::fs::read(path)?)?;
+        encoder.encode_into(ImageRef::from(&image), &mut out)?;
+        std::fs::write(path, &out)?;
+    }
+    Ok(())
+}
+```
+
+- `PaletteMode::Auto` converts 8-bit RGB and RGBA images with at most 256
+  colors to indexed color, without changing a pixel. Small images are encoded
+  both ways and the smaller file is kept.
+- `StripChunks::Safe` keeps `tRNS` and the chunks that change how the image looks
+  (`cICP`, `iCCP`, `sRGB`, `gAMA`, `cHRM`, `pHYs`); `StripChunks::All` keeps only
+  `tRNS`.
+- `FilterStrategy` picks the row filters: `Adaptive`, the default, chooses one per
+  row; `Fixed` uses one filter for every row.
+
 ## Conversion rules
 
 `to_bitmap`, `decode_rgba8`, `decode_rgb8` and the `Decoder` bitmap methods convert pixels like this:
@@ -220,17 +317,20 @@ Alpha isn't premultiplied, and no gamma or color correction is applied.
 
 Every fallible function returns `format_png::Error`, which says exactly what's
 wrong: a bad signature, a CRC mismatch, an invalid `IHDR` field, corrupt image
-data, and so on. Malformed input returns an error; it doesn't panic. `Error` is
-`#[non_exhaustive]`, as variants will be added as more of the format is supported.
+data, pixel data of the wrong size for the encoder, and so on. Malformed input
+returns an error; it doesn't panic. `Error` is `#[non_exhaustive]`, as variants
+will be added as more of the format is supported.
 
 ## Not supported yet
 
 - **Parsing `bKGD`, `sBIT`, `hIST`, `sPLT` and other ancillary chunks.** They're
-  kept as raw chunks with `preserve_chunks`, and available through
-  `read_chunks` and `ChunkReader`.
-- **Color management:** gamma, chromaticities and ICC profiles are read but
-  not applied.
-- **Encoding.**
+  kept as raw chunks with `preserve_chunks`, written back with
+  `ImageRef::with_chunks`, and available through `read_chunks` and `ChunkReader`.
+- **Color management:** gamma, chromaticities, ICC profiles and `cICP` are read
+  and written but not applied to the pixels.
+- **Animated PNG:** only the default image is decoded and encoded.
+- **Lossy encoding:** `PaletteMode::Auto` only converts images that fit a
+  palette exactly; there's no quantization.
 
 ## Development
 
@@ -250,7 +350,7 @@ The script sets pixel values with a formula, so the tests compute the expected
 pixels instead of storing reference images. The valid fixtures were checked
 against Pillow.
 
-To time decoding, see [benches/README.md](benches/README.md):
+To time decoding, see [benches/README.md](benches/README.md) in the repository:
 
 ```sh
 cargo bench --bench decode -- path/to/image.png

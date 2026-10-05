@@ -127,25 +127,12 @@ impl ImageHeader {
         let width = reader.read_u32()?;
         let height = reader.read_u32()?;
 
-        if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        Self::validate_dimensions(width, height)?;
 
         let bit_depth = reader.read_u8()?;
         let color_type = ColorType::try_from(reader.read_u8()?)?;
-        let bit_depth_allowed = match color_type {
-            ColorType::Grayscale => matches!(bit_depth, 1 | 2 | 4 | 8 | 16),
-            ColorType::Indexed => matches!(bit_depth, 1 | 2 | 4 | 8),
-            ColorType::Rgb | ColorType::GrayscaleAlpha | ColorType::Rgba => {
-                matches!(bit_depth, 8 | 16)
-            }
-        };
-        if !bit_depth_allowed {
-            return Err(Error::InvalidBitDepth {
-                color_type,
-                bit_depth,
-            });
-        }
+
+        Self::validate_bit_depth(bit_depth, color_type)?;
 
         let compression_method = reader.read_u8()?;
         if compression_method != 0 {
@@ -171,6 +158,30 @@ impl ImageHeader {
     /// Bits per pixel: channels × bit depth, from 1 to 64.
     pub fn bits_per_pixel(&self) -> u8 {
         self.color_type.channels() * self.bit_depth
+    }
+
+    pub(crate) fn validate_dimensions(width: u32, height: u32) -> Result<(), Error> {
+        if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+            return Err(Error::InvalidDimensions { width, height });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_bit_depth(bit_depth: u8, color_type: ColorType) -> Result<(), Error> {
+        let bit_depth_allowed = match color_type {
+            ColorType::Grayscale => matches!(bit_depth, 1 | 2 | 4 | 8 | 16),
+            ColorType::Indexed => matches!(bit_depth, 1 | 2 | 4 | 8),
+            ColorType::Rgb | ColorType::GrayscaleAlpha | ColorType::Rgba => {
+                matches!(bit_depth, 8 | 16)
+            }
+        };
+        if !bit_depth_allowed {
+            return Err(Error::InvalidBitDepth {
+                color_type,
+                bit_depth,
+            });
+        }
+        Ok(())
     }
 
     /// Bytes per row of decoded pixels. Pixels under 8 bits are packed, so a row

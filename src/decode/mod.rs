@@ -1,10 +1,10 @@
 mod chunk_reader;
 mod decoder;
-mod deinterlace;
+pub(crate) mod deinterlace;
 mod image_data;
 mod metadata;
 mod options;
-mod unfilter;
+pub(crate) mod unfilter;
 
 pub use chunk_reader::ChunkReader;
 pub use decoder::Decoder;

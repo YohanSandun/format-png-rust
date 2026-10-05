@@ -182,7 +182,6 @@ fn color_key<'a>(source: &Source<'a>, format: PixelFormat) -> Option<&'a Transpa
 /// `key` is `Transparency::Gray` for grayscale and `Transparency::Rgb` for RGB.
 pub(crate) fn convert_row_with_key(header: &ImageHeader, key: &Transparency, row: &[u8], out: &mut [u8]) {
     let bit_depth = header.bit_depth;
-    // Samples per pixel in `row`: 1 for grayscale, 3 for RGB.
     let channels = usize::from(header.color_type.channels());
 
     // `out` holds exactly `width` RGBA pixels, so this stops before any padding

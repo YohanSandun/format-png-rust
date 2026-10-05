@@ -24,6 +24,27 @@ impl Gamma {
         Ok(Gamma(value))
     }
 
+    /// Creates a gamma from its value times 100000, as `gAMA` stores it, for
+    /// encoding an image. 45455 means 1/2.2, the usual value.
+    ///
+    /// ```
+    /// use format_png::png::metadata::Gamma;
+    ///
+    /// let gamma = Gamma::new(45455)?;
+    /// assert_eq!(gamma.scaled(), 45455);
+    /// # Ok::<(), format_png::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidChunkData`] if `scaled` is 0, which isn't a valid gamma.
+    pub fn new(scaled: u32) -> Result<Self, Error> {
+        if scaled == 0 {
+            return Err(Error::InvalidChunkData(ChunkType::GAMA));
+        }
+        Ok(Gamma(scaled))
+    }
+
     /// The value as stored: the gamma times 100000. 45455 means 1/2.2.
     pub fn scaled(&self) -> u32 {
         self.0
@@ -40,13 +61,21 @@ impl Gamma {
 /// 31270 means 0.3127.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Chromaticities {
+    /// The white point's x.
     pub white_x: u32,
+    /// The white point's y.
     pub white_y: u32,
+    /// The red primary's x.
     pub red_x: u32,
+    /// The red primary's y.
     pub red_y: u32,
+    /// The green primary's x.
     pub green_x: u32,
+    /// The green primary's y.
     pub green_y: u32,
+    /// The blue primary's x.
     pub blue_x: u32,
+    /// The blue primary's y.
     pub blue_y: u32,
 }
 
@@ -79,9 +108,15 @@ impl Chromaticities {
 /// a display's range should be handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderingIntent {
+    /// Keeps the relationships between colors, for photographs.
     Perceptual = 0,
+    /// Keeps colors the display can show exactly, and maps the rest to the
+    /// nearest it can, relative to the white point. For logos and illustrations.
     RelativeColorimetric = 1,
+    /// Keeps saturation at the cost of hue and lightness, for charts and graphs.
     Saturation = 2,
+    /// Like relative colorimetric, but without adapting to the display's white
+    /// point, for proofs that simulate another medium.
     AbsoluteColorimetric = 3,
 }
 

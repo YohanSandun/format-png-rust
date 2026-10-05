@@ -1,8 +1,9 @@
-//! A PNG decoder with a simple API for getting pixels on screen, and full
-//! control when you need it.
+//! A PNG decoder and encoder in pure Rust, with no `unsafe` code. It has a
+//! simple API for getting pixels on screen or into a file, and full control
+//! when you need it.
 //!
-//! Every color type, every bit depth and Adam7 interlacing are supported.
-//! Encoding isn't implemented yet.
+//! Every color type, every bit depth and Adam7 interlacing are supported, in
+//! both directions.
 //!
 //! # Getting started
 //!
@@ -49,21 +50,56 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! # Encoding
+//!
+//! [`encode_rgba8`] is the reverse of [`decode_rgba8`]:
+//!
+//! ```
+//! let pixels = [255, 0, 0, 255, 0, 0, 255, 128]; // red, then half-transparent blue
+//! let png = format_png::encode_rgba8(2, 1, &pixels)?;
+//!
+//! assert_eq!(format_png::decode_rgba8(&png)?.data(), pixels);
+//! # Ok::<(), format_png::Error>(())
+//! ```
+//!
+//! - [`encode`] writes any [`ImageRef`]: pixels in any color type and bit depth,
+//!   in the layout [`Image::data`] uses, with a palette, transparency,
+//!   [`Metadata`] and extra chunks. `ImageRef::from(&image)` re-encodes a
+//!   decoded [`Image`].
+//! - An [`Encoder`] can be reused for many images, like a [`Decoder`].
+//! - [`EncodeOptions`] choose the compression level and strategy, and the row
+//!   filters. [`PaletteMode::Auto`] writes images with few colors as indexed
+//!   color, and [`StripChunks`] leaves out ancillary chunks, both to make files
+//!   smaller.
+//!
 //! # Not supported yet
 //!
-//! `bKGD`, `sBIT` and some other ancillary chunks aren't parsed yet; see
-//! [`png::metadata`] for the ones that are. The others can be kept raw with
-//! [`DecodeOptions::preserve_chunks`], and [`read_chunks`] and a [`ChunkReader`]
-//! return them all.
+//! - `bKGD`, `sBIT`, `hIST`, `sPLT` and some other ancillary chunks aren't
+//!   parsed; see [`png::metadata`] for the ones that are. The others can be kept
+//!   raw with [`DecodeOptions::preserve_chunks`], written back with
+//!   [`ImageRef::with_chunks`], and read with [`read_chunks`] or a [`ChunkReader`].
+//! - Color management: gamma, chromaticities, ICC profiles and `cICP` are read
+//!   and written but not applied to the pixels.
+//! - Animated PNG: only the default image is decoded and encoded.
+//! - Lossy encoding: [`PaletteMode::Auto`] only converts images that fit a
+//!   palette exactly.
+
+#![warn(missing_docs)]
 
 pub mod png;
 mod convert;
 mod io;
 mod decode;
+mod encode;
 mod error;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
+pub use encode::{EncodeOptions, Encoder, FilterStrategy, ImageRef, PaletteMode, StripChunks};
 pub use error::Error;
+pub use rust_deflate::CompressionLevel;
+/// Which kind of DEFLATE blocks the encoder writes; see
+/// [`EncodeOptions::compression_strategy`].
+pub use rust_deflate::Strategy as CompressionStrategy;
 pub use png::{
     Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha,
     PixelFormat, PngChunks, Transparency,
@@ -133,6 +169,31 @@ pub fn read_chunks(data: &[u8]) -> Result<PngChunks<'_>, Error> {
 /// Same as [`Decoder::read_header`].
 pub fn read_header(data: &[u8]) -> Result<ImageHeader, Error> {
     Decoder::new().read_header(data)
+}
+
+/// Encodes an image to PNG with default options; see [`ImageRef`].
+///
+/// This is the simple API. To encode many images, reuse an [`Encoder`] and call
+/// [`Encoder::encode_into`] instead.
+///
+/// # Errors
+///
+/// Same as [`Encoder::encode_into`].
+pub fn encode(image: ImageRef<'_>) -> Result<Vec<u8>, Error> {
+    Encoder::new().encode(image)
+}
+
+/// Encodes 8-bit RGBA pixels to PNG with default options: the reverse of
+/// [`decode_rgba8`]. `data` is `width × height × 4` bytes, rows top to bottom
+/// with no padding, as a browser canvas's `ImageData` holds them.
+///
+/// # Errors
+///
+/// Same as [`Encoder::encode_into`]; [`Error::InvalidImageDataLength`] if `data`
+/// is the wrong size.
+pub fn encode_rgba8(width: u32, height: u32, data: &[u8]) -> Result<Vec<u8>, Error> {
+    let header = ImageHeader { width, height, bit_depth: 8, color_type: ColorType::Rgba, interlace: Interlace::None };
+    encode(ImageRef::new(header, data))
 }
 
 #[cfg(test)]

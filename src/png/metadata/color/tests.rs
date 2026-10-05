@@ -102,3 +102,21 @@ fn rendering_intent_rejects_other_lengths() {
         );
     }
 }
+
+// ---------- Gamma::new ----------
+
+#[test]
+fn gamma_new_keeps_the_scaled_value() {
+    assert_eq!(Gamma::new(45455).map(|g| g.scaled()), Ok(45455));
+    assert_eq!(Gamma::new(1).map(|g| g.scaled()), Ok(1));
+}
+
+#[test]
+fn gamma_new_rejects_0() {
+    assert_eq!(Gamma::new(0), Err(Error::InvalidChunkData(ChunkType::GAMA)));
+}
+
+#[test]
+fn gamma_new_equals_the_same_gamma_parsed() {
+    assert_eq!(Gamma::new(100_000), Gamma::parse(&100_000u32.to_be_bytes()));
+}

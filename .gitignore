@@ -2,3 +2,4 @@
 /benches/data/*.png
 .idea/
 *.iml
+__pycache__/

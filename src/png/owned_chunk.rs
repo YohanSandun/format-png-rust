@@ -31,6 +31,26 @@ impl OwnedChunk {
         Self { chunk_type: chunk.chunk_type(), data: chunk.data().to_vec(), position }
     }
 
+    /// A chunk of your own, to write with
+    /// [`ImageRef::with_chunks`](crate::ImageRef::with_chunks) at `position`.
+    ///
+    /// Use an ancillary, private type: a lowercase first and second letter, such
+    /// as `myAp`. Make the fourth letter lowercase too if the data doesn't depend
+    /// on the image's pixels, so editors may copy it; see
+    /// [`ChunkType::is_safe_to_copy`].
+    ///
+    /// ```
+    /// use format_png::{ChunkPosition, OwnedChunk};
+    /// use format_png::png::ChunkType;
+    ///
+    /// let chunk = OwnedChunk::from_data(ChunkType::from_bytes(*b"myAp")?, b"settings".to_vec(), ChunkPosition::AfterImageData);
+    /// assert_eq!(chunk.data(), b"settings");
+    /// # Ok::<(), format_png::Error>(())
+    /// ```
+    pub fn from_data(chunk_type: ChunkType, data: Vec<u8>, position: ChunkPosition) -> Self {
+        Self { chunk_type, data, position }
+    }
+
     /// The chunk's type.
     pub fn chunk_type(&self) -> ChunkType {
         self.chunk_type
