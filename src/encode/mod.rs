@@ -11,7 +11,8 @@
 //! 2. `filter::filter_image` adds a filter type byte to each row and filters it,
 //!    as [`FilterStrategy`] says. Interlaced images are first split into their
 //!    seven Adam7 passes by `interlace::interlace_pass`, and each is filtered on its own.
-//! 3. The filtered rows are zlib-compressed into one stream.
+//! 3. The filtered rows are zlib-compressed into one stream, in parallel
+//!    segments with [`Threads::Auto`] or [`Threads::Count`]; see `parallel`.
 //! 4. `chunk_writer` writes the signature, `IHDR`, `PLTE` if there is a palette,
 //!    `tRNS` if there is transparency, the stream as one or more `IDAT` chunks,
 //!    and `IEND`. `metadata` writes the metadata chunks around `PLTE`, in the
@@ -30,8 +31,12 @@ mod interlace;
 mod metadata;
 mod options;
 mod palettize;
+mod parallel;
+mod prepared;
 mod strip;
 
 pub use encoder::Encoder;
 pub use image_ref::ImageRef;
-pub use options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks};
+pub use options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks, Threads};
+pub use parallel::{SegmentCompression, compress_segment};
+pub use prepared::PreparedPng;

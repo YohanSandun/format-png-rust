@@ -85,6 +85,8 @@ fn public_types_can_be_used_across_threads() {
     assert_send_sync::<crate::PngChunks<'static>>();
     assert_send_sync::<crate::Encoder>();
     assert_send_sync::<crate::EncodeOptions>();
+    assert_send_sync::<crate::PreparedPng>();
+    assert_send_sync::<crate::SegmentCompression>();
     assert_send_sync::<crate::ImageRef<'static>>();
     assert_send_sync::<crate::Image>();
     assert_send_sync::<crate::Bitmap>();

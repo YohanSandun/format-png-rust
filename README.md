@@ -38,6 +38,7 @@ method, with palettes, `tRNS` transparency and metadata. See
 
 - Every color type, bit depth and Adam7 interlacing
 - Adaptive or fixed row filters, and a choice of compression level and strategy
+- Optional parallel compression, several times faster for large images
 - Palette, `tRNS`, every metadata chunk the decoder reads, and extra chunks:
   raw ones kept from decoding, or your own
 - Lossless re-encoding of a decoded image, metadata and chunks included
@@ -51,7 +52,7 @@ method, with palettes, `tRNS` transparency and metadata. See
 
 ```toml
 [dependencies]
-format-png = "0.1"
+format-png = "0.2"
 ```
 
 The crate is imported as `format_png`. It needs Rust 1.88 or later.
@@ -271,13 +272,13 @@ transparency, and also its metadata and chunks if it was decoded with
 An `Encoder` takes options, and keeps its compressor and buffers between images:
 
 ```rust,no_run
-use format_png::{CompressionLevel, EncodeOptions, Encoder, ImageRef, PaletteMode, StripChunks};
+use format_png::{EncodeOptions, Encoder, ImageRef, PaletteMode, StripChunks, Threads};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut encoder = Encoder::with_options(EncodeOptions {
-        compression: CompressionLevel::BEST,
         palette: PaletteMode::Auto, // indexed color when it's lossless
         strip: StripChunks::Safe,   // drop text, time, Exif and private chunks
+        threads: Threads::Auto,     // compress on every core
         ..EncodeOptions::default()
     });
     let mut out = Vec::new();
@@ -299,6 +300,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   `tRNS`.
 - `FilterStrategy` picks the row filters: `Adaptive`, the default, chooses one per
   row; `Fixed` uses one filter for every row.
+
+### Encode large images faster
+
+Compression is most of the time spent encoding, and on photos it's slow: a
+2500×3800 photo takes several seconds at the default level on one thread.
+`Threads::Auto` compresses the image data on every core, in segments of 1 MiB,
+for files about 0.1% larger:
+
+| 2500×3800 photo, 20 cores | `Threads::Single` | `Threads::Auto` |
+|---|---|---|
+| Level 4 | 1.1 s | 0.3 s |
+| Level 6 (default) | 9.7 s | 1.2 s |
+| Level 9 | 16 s | 2.2 s |
+
+The output depends only on the image and the options, never on the number of
+threads, so every machine writes the same file. Where threads aren't available,
+as in WebAssembly, the encoder runs on the calling thread.
+
+To spread the work somewhere threads can't reach, such as Web Workers, split
+encoding into steps: `Encoder::prepare` does everything but compress the image
+data, `compress_segment` compresses one segment anywhere, and
+`PreparedPng::finish` joins them into the same file `Threads::Auto` writes:
+
+```rust,no_run
+use format_png::{Encoder, ImageRef, compress_segment};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let image = format_png::decode(&std::fs::read("large.png")?)?;
+
+    let prepared = Encoder::new().prepare(ImageRef::from(&image))?;
+    // Each of these can run in a different worker, in any order.
+    let compressed: Vec<Vec<u8>> = (0..prepared.segment_count())
+        .map(|i| compress_segment(prepared.segment(i), prepared.compression()))
+        .collect();
+    std::fs::write("out.png", prepared.finish(&compressed)?)?;
+    Ok(())
+}
+```
+
+The compression level matters too: on photos, level 4 is about 7 times faster
+than level 6 for a file 6% larger, and levels 7 to 9 are much slower for under 1%.
 
 ## Conversion rules
 

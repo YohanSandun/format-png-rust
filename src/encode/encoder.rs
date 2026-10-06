@@ -8,6 +8,8 @@ use super::filter::filter_image;
 use super::image_ref::ImageRef;
 use super::options::{EncodeOptions, PaletteMode, StripChunks};
 use super::palettize::palettize;
+use super::parallel::{SEGMENT_SIZE, SegmentCompression, compress_zlib_segments};
+use super::prepared::{Deferred, PreparedPng};
 use super::strip::strip_metadata;
 use crate::encode::extra_chunks::{validate_extra_chunks, write_extra_chunks};
 use crate::encode::metadata::{
@@ -115,6 +117,40 @@ impl Encoder {
     ///   entries than its bit depth can index.
     /// - [`Error::ImageTooLarge`] if the image doesn't fit in memory on this platform.
     pub fn encode_into(&mut self, image: ImageRef<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
+        self.run(image, out, false).map(|_| ())
+    }
+
+    /// Does everything [`encode_into`](Self::encode_into) does except compress the
+    /// image data, which is left in segments to compress anywhere: on other
+    /// threads, or in other WebAssembly instances such as Web Workers. See
+    /// [`PreparedPng`].
+    ///
+    /// The segments are the same as with [`Threads::Auto`](crate::Threads::Auto),
+    /// whatever [`EncodeOptions::threads`] says, so the PNG
+    /// [`PreparedPng::finish`] writes is the one `Threads::Auto` would.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`encode_into`](Self::encode_into).
+    pub fn prepare(&mut self, image: ImageRef<'_>) -> Result<PreparedPng, Error> {
+        let mut head = Vec::new();
+        let deferred = self.run(image, &mut head, true)?;
+        let compression = SegmentCompression {
+            level: self.options.compression,
+            strategy: self.options.compression_strategy,
+        };
+        Ok(PreparedPng::new(head, deferred, compression))
+    }
+
+    /// Strips, validates and writes `image` to `out`. With `defer`, image data
+    /// over one segment isn't compressed: `out` gets everything before it, and
+    /// the rest is returned.
+    fn run(
+        &mut self,
+        image: ImageRef<'_>,
+        out: &mut Vec<u8>,
+        defer: bool,
+    ) -> Result<Option<Deferred>, Error> {
         let stripped_metadata;
         let image = match self.options.strip {
             StripChunks::Keep => image,
@@ -147,20 +183,21 @@ impl Encoder {
         // The converted image borrows this buffer while `write_png` borrows the
         // encoder, so it's taken out for the call and put back after, even on error.
         let mut indexed = std::mem::take(&mut self.indexed);
-        let result = self.encode_validated(image, &mut indexed, out);
+        let result = self.encode_validated(image, &mut indexed, out, defer);
         self.indexed = indexed;
         result
     }
 
-    /// `encode_into` after stripping and validation: converts the image to
-    /// indexed color if `PaletteMode::Auto` can, with the indices in `indexed`,
-    /// and writes the smaller of the two for small images.
+    /// `run` after stripping and validation: converts the image to indexed color
+    /// if `PaletteMode::Auto` can, with the indices in `indexed`, and writes the
+    /// smaller of the two for small images.
     fn encode_validated(
         &mut self,
         image: ImageRef<'_>,
         indexed: &mut Vec<u8>,
         out: &mut Vec<u8>,
-    ) -> Result<(), Error> {
+        defer: bool,
+    ) -> Result<Option<Deferred>, Error> {
         let palettized = match self.options.palette {
             PaletteMode::Auto => {
                 palettize(image.header(), image.data(), image.transparency(), indexed)
@@ -168,7 +205,7 @@ impl Encoder {
             _ => None,
         };
         let Some(palettized) = palettized else {
-            return self.write_png(&image, self.options.keep_unsafe_chunks, out);
+            return self.write_png(&image, self.options.keep_unsafe_chunks, out, defer);
         };
 
         let mut converted = ImageRef::new(palettized.header, indexed)
@@ -182,14 +219,23 @@ impl Encoder {
         }
         // Unsafe-to-copy chunks describe the image as given; after a change of
         // color type they'd be wrong.
-        self.write_png(&converted, false, out)?;
+        let deferred = self.write_png(&converted, false, out, defer)?;
 
         // The palette's chunks cost up to about 1 KB, which a small image may not
         // win back. Encoding it again as given is cheap there, so keep whichever
         // is smaller, and the image as given on a tie.
+        // Images that small are a single segment, so nothing is ever deferred here.
         if image.data().len() <= AUTO_PALETTE_COMPARE_LIMIT {
+            debug_assert!(deferred.is_none());
             let mut unconverted = std::mem::take(&mut self.unconverted);
-            let result = self.write_png(&image, self.options.keep_unsafe_chunks, &mut unconverted);
+            let result = self
+                .write_png(
+                    &image,
+                    self.options.keep_unsafe_chunks,
+                    &mut unconverted,
+                    false,
+                )
+                .map(|_| ());
             if result.is_ok() && unconverted.len() <= out.len() {
                 std::mem::swap(out, &mut unconverted);
             }
@@ -197,18 +243,23 @@ impl Encoder {
             result?;
         }
 
-        Ok(())
+        Ok(deferred)
     }
 
     /// Filters, compresses and writes `image` as a PNG to `out`, replacing its
     /// contents. `image` has been validated. `keep_unsafe` is
     /// `EncodeOptions::keep_unsafe_chunks`, or `false` for a converted image.
+    ///
+    /// With `defer`, filtered data of more than one segment isn't compressed:
+    /// `out` gets everything before the image data, and the filtered data and
+    /// everything after it are returned.
     fn write_png(
         &mut self,
         image: &ImageRef<'_>,
         keep_unsafe: bool,
         out: &mut Vec<u8>,
-    ) -> Result<(), Error> {
+        defer: bool,
+    ) -> Result<Option<Deferred>, Error> {
         out.clear();
         self.scanlines.clear();
         self.compressed.clear();
@@ -225,8 +276,28 @@ impl Encoder {
             image.data(),
             &mut self.scanlines,
         )?;
-        self.compressor
-            .compress_zlib_into_with(&self.scanlines, &mut self.compressed, compression);
+        let segmented = self.scanlines.len() > SEGMENT_SIZE;
+        let defer = defer && segmented;
+        match self.options.threads.parallel_count() {
+            _ if defer => {}
+            // A single segment would compress the same way on one thread.
+            Some(threads) if segmented => compress_zlib_segments(
+                &self.scanlines,
+                SegmentCompression {
+                    level: self.options.compression,
+                    strategy: self.options.compression_strategy,
+                },
+                threads,
+                &mut self.compressed,
+            ),
+            _ => {
+                self.compressor.compress_zlib_into_with(
+                    &self.scanlines,
+                    &mut self.compressed,
+                    compression,
+                );
+            }
+        }
 
         write_signature(out);
         write_chunk(out, ChunkType::IHDR, &header_data(header));
@@ -251,12 +322,21 @@ impl Encoder {
 
         write_extra_chunks(out, image, ChunkPosition::BeforeImageData, keep_unsafe);
 
+        if defer {
+            let mut tail = Vec::new();
+            write_extra_chunks(&mut tail, image, ChunkPosition::AfterImageData, keep_unsafe);
+            write_chunk(&mut tail, ChunkType::IEND, &[]);
+            // Moved out rather than copied; the encoder grows a new buffer next time.
+            let scanlines = std::mem::take(&mut self.scanlines);
+            return Ok(Some(Deferred { scanlines, tail }));
+        }
+
         write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
 
         write_extra_chunks(out, image, ChunkPosition::AfterImageData, keep_unsafe);
 
         write_chunk(out, ChunkType::IEND, &[]);
-        Ok(())
+        Ok(None)
     }
 }
 

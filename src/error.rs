@@ -157,6 +157,10 @@ pub enum Error {
     /// writes `IHDR`, `PLTE`, `IDAT` and `IEND` itself, and can't write an
     /// unknown critical chunk safely.
     UnexpectedCriticalChunk(ChunkType),
+
+    /// [`PreparedPng::finish`](crate::PreparedPng::finish) was given a different
+    /// number of compressed segments than the image has.
+    InvalidSegmentCount { expected: usize, actual: usize },
 }
 
 impl fmt::Display for Error {
@@ -270,6 +274,9 @@ impl fmt::Display for Error {
             }
             Error::InvalidImageDataLength { expected, actual } => {
                 write!(f, "pixel data is {actual} bytes, expected {expected}")
+            }
+            Error::InvalidSegmentCount { expected, actual } => {
+                write!(f, "got {actual} compressed segments, expected {expected}")
             }
             Error::UnexpectedCriticalChunk(chunk_type) => {
                 write!(

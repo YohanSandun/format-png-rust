@@ -93,6 +93,10 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! The encoder can also use several threads itself: with [`Threads::Auto`] in
+//! [`EncodeOptions::threads`], large images compress several times faster. See
+//! [`Threads`].
+//!
 //! # Not supported yet
 //!
 //! - `bKGD`, `sBIT`, `hIST`, `sPLT` and some other ancillary chunks aren't
@@ -115,7 +119,10 @@ mod io;
 pub mod png;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
-pub use encode::{EncodeOptions, Encoder, FilterStrategy, ImageRef, PaletteMode, StripChunks};
+pub use encode::{
+    EncodeOptions, Encoder, FilterStrategy, ImageRef, PaletteMode, PreparedPng, SegmentCompression,
+    StripChunks, Threads, compress_segment,
+};
 pub use error::Error;
 pub use png::{
     Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette,

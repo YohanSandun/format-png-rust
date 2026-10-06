@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use rust_deflate::{CompressionLevel, Strategy as CompressionStrategy};
 
 use crate::png::FilterType;
@@ -14,6 +16,11 @@ use crate::png::FilterType;
 #[derive(Debug, Clone)]
 pub struct EncodeOptions {
     /// How hard to compress the image data. [`CompressionLevel::MEDIUM`] by default.
+    ///
+    /// Higher levels are slower, especially on photos. On a 2500×3800 photo,
+    /// level 4 is about 7 times faster than level 6 for a file 6% larger, while
+    /// levels 7 to 9 are 1.4 to 2 times slower for one under 1% smaller. To make
+    /// large images faster without giving up compression, see [`threads`](Self::threads).
     pub compression: CompressionLevel,
 
     /// Which kind of DEFLATE blocks the image data is compressed into.
@@ -41,6 +48,10 @@ pub struct EncodeOptions {
     /// Which ancillary chunks to leave out, to make the file smaller.
     /// [`StripChunks::Keep`] by default.
     pub strip: StripChunks,
+
+    /// How many threads compress the image data. [`Threads::Single`] by default.
+    /// Large images compress several times faster on several threads.
+    pub threads: Threads,
 }
 
 impl Default for EncodeOptions {
@@ -52,6 +63,7 @@ impl Default for EncodeOptions {
             keep_unsafe_chunks: false,
             palette: PaletteMode::Keep,
             strip: StripChunks::Keep,
+            threads: Threads::Single,
         }
     }
 }
@@ -148,4 +160,56 @@ pub enum StripChunks {
     /// viewers that apply color management, such as browsers: an `iCCP`
     /// profile, a `cICP` color space or a `gAMA` far from 1/2.2 is lost.
     All,
+}
+
+/// How many threads the encoder compresses the image data on.
+///
+/// Compression is most of the time spent encoding, and on photos at the higher
+/// levels it's slow: several seconds for a 10-megapixel image on one thread.
+/// [`Auto`](Self::Auto) and [`Count`](Self::Count) split the image data into
+/// segments of 1 MiB and compress them in parallel, which on a 2500×3800 photo
+/// at the default level takes about 1 second instead of 7 on 8 or more cores.
+///
+/// - Each segment is compressed without the one before it, so files come out
+///   slightly larger: about 0.1%.
+/// - The segments are a fixed size, so the output depends only on the image and
+///   the options, never on the number of threads or the machine: `Auto`
+///   and every `Count` give the same bytes.
+/// - Image data of 1 MiB or less is a single segment, compressed as with
+///   [`Single`](Self::Single).
+/// - Where threads aren't available, as on `wasm32-unknown-unknown`, everything
+///   runs on the calling thread, with the same output. To spread the segments
+///   over Web Workers or other processes instead, use
+///   [`Encoder::prepare`](crate::Encoder::prepare).
+///
+/// New modes may be added, so matches on it need a wildcard arm.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Threads {
+    /// Compress the image data as one stream on the calling thread: the smallest
+    /// output, and no threads started.
+    #[default]
+    Single,
+
+    /// Compress in parallel on as many threads as the machine can run at once,
+    /// from [`std::thread::available_parallelism`].
+    Auto,
+
+    /// Compress in parallel on this many threads, counting the calling thread.
+    /// `Count(1)` compresses the segments on the calling thread alone, giving the
+    /// same output as `Auto`.
+    Count(NonZeroUsize),
+}
+
+impl Threads {
+    /// The number of threads to use, or `None` for [`Threads::Single`].
+    pub(crate) fn parallel_count(self) -> Option<usize> {
+        match self {
+            Threads::Single => None,
+            Threads::Auto => {
+                Some(std::thread::available_parallelism().map_or(1, NonZeroUsize::get))
+            }
+            Threads::Count(count) => Some(count.get()),
+        }
+    }
 }

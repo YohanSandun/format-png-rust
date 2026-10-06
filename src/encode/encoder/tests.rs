@@ -4,7 +4,7 @@ use rust_deflate::{CompressionLevel, Strategy as CompressionStrategy};
 
 use super::{AUTO_PALETTE_COMPARE_LIMIT, Encoder};
 use crate::encode::image_ref::ImageRef;
-use crate::encode::options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks};
+use crate::encode::options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks, Threads};
 use crate::error::Error;
 use crate::png::metadata::{
     Gamma, PhysicalDimensions, RenderingIntent, Text, TextKind, Time, Unit,
@@ -1447,5 +1447,113 @@ fn the_kept_file_is_complete_after_reusing_the_encoder() {
             data,
             "{width}x{height}"
         );
+    }
+}
+
+// ---------- Threads ----------
+
+/// 1024x600 RGBA: about 2.3 MiB of filtered rows, so three segments.
+fn three_segments() -> (ImageHeader, Vec<u8>) {
+    let header = header(1024, 600, 8, ColorType::Rgba);
+    let data = pixels(&header);
+    (header, data)
+}
+
+fn threads(threads: Threads) -> EncodeOptions {
+    EncodeOptions {
+        threads,
+        ..EncodeOptions::default()
+    }
+}
+
+fn count(n: usize) -> Threads {
+    Threads::Count(std::num::NonZeroUsize::new(n).unwrap())
+}
+
+#[test]
+fn single_thread_is_the_default() {
+    assert_eq!(EncodeOptions::default().threads, Threads::Single);
+}
+
+#[test]
+fn parallel_compression_round_trips() {
+    let (header, data) = three_segments();
+
+    for mode in [Threads::Auto, count(1), count(2), count(16)] {
+        let png = Encoder::with_options(threads(mode))
+            .encode(ImageRef::new(header, &data))
+            .unwrap();
+
+        assert_eq!(decode(&png).data(), data, "{mode:?}");
+    }
+}
+
+#[test]
+fn parallel_output_is_the_same_on_any_number_of_threads() {
+    let (header, data) = three_segments();
+    let one = Encoder::with_options(threads(count(1)))
+        .encode(ImageRef::new(header, &data))
+        .unwrap();
+
+    for mode in [Threads::Auto, count(2), count(3), count(16)] {
+        assert_eq!(
+            Encoder::with_options(threads(mode))
+                .encode(ImageRef::new(header, &data))
+                .unwrap(),
+            one,
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn small_images_compress_the_same_in_parallel_mode() {
+    let header = header(64, 64, 8, ColorType::Rgba);
+    let data = pixels(&header);
+
+    let single = Encoder::new().encode(ImageRef::new(header, &data)).unwrap();
+    let auto = Encoder::with_options(threads(Threads::Auto))
+        .encode(ImageRef::new(header, &data))
+        .unwrap();
+
+    assert_eq!(auto, single);
+}
+
+#[test]
+fn parallel_compression_works_with_every_other_option() {
+    let (mut header, data) = three_segments();
+    header.interlace = Interlace::Adam7;
+    let metadata = some_metadata();
+    let options = EncodeOptions {
+        threads: Threads::Auto,
+        compression: CompressionLevel::FAST,
+        filter: FilterStrategy::Fixed(FilterType::Paeth),
+        palette: PaletteMode::Auto,
+        ..EncodeOptions::default()
+    };
+
+    let png = Encoder::with_options(options)
+        .encode(ImageRef::new(header, &data).with_metadata(&metadata))
+        .unwrap();
+
+    // PaletteMode::Auto may write it as indexed color, so compare as RGBA.
+    assert_eq!(crate::decode_rgba8(&png).unwrap().data(), data);
+    assert_eq!(decode_with_metadata(&png).metadata(), &metadata);
+}
+
+#[test]
+fn parallel_encoder_can_be_reused() {
+    let mut encoder = Encoder::with_options(threads(Threads::Auto));
+    let mut out = Vec::new();
+
+    for (width, height) in [(1024, 600), (13, 7), (2048, 300)] {
+        let header = header(width, height, 8, ColorType::Rgba);
+        let data = pixels(&header);
+
+        encoder
+            .encode_into(ImageRef::new(header, &data), &mut out)
+            .unwrap();
+
+        assert_eq!(decode(&out).data(), data, "{width}x{height}");
     }
 }
