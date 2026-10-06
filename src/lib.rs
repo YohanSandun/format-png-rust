@@ -72,6 +72,27 @@
 //!   color, and [`StripChunks`] leaves out ancillary chunks, both to make files
 //!   smaller.
 //!
+//! # Threads and async
+//!
+//! Every type is `Send` and `Sync`, so decoders, encoders and images can move
+//! between threads, and a reused [`Decoder`] or [`Encoder`] can live in a thread
+//! pool's workers.
+//!
+//! Decoding and encoding are CPU work on bytes in memory, so there's no `async`
+//! API: an `async fn` would still block the thread that runs it. In async code,
+//! run them on a thread meant for blocking work, such as with Tokio's
+//! `spawn_blocking`, or on a thread of your own:
+//!
+//! ```
+//! let data = std::fs::read("tests/data/valid/rgb_8.png")?;
+//!
+//! let worker = std::thread::spawn(move || format_png::decode_rgba8(&data));
+//! let bitmap = worker.join().unwrap()?;
+//!
+//! assert_eq!((bitmap.width(), bitmap.height()), (13, 7));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! # Not supported yet
 //!
 //! - `bKGD`, `sBIT`, `hIST`, `sPLT` and some other ancillary chunks aren't

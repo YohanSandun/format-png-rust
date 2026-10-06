@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Every public type is now guaranteed `Send` and `Sync`, checked by a test,
+  and the crate docs explain using it from threads and async code.
+
 ## 0.1.1
 
 - Getters and `with_` builder methods are `#[must_use]`, so ignoring their
