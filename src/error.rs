@@ -161,6 +161,25 @@ pub enum Error {
     /// [`PreparedPng::finish`](crate::PreparedPng::finish) was given a different
     /// number of compressed segments than the image has.
     InvalidSegmentCount { expected: usize, actual: usize },
+
+    /// The PNG has no `acTL` chunk before its image data, so it isn't animated.
+    /// [`decode`](crate::decode) reads its image.
+    NotAnimated,
+
+    /// An `fcTL` or `fdAT` chunk's sequence number isn't the next one: they
+    /// must count up from 0, in file order.
+    FrameSequenceMismatch { expected: u32, actual: u32 },
+
+    /// The number of frames isn't what `acTL` says. For the encoder, `expected`
+    /// is 1 when there are no frames.
+    FrameCountMismatch { expected: u32, actual: u32 },
+
+    /// An `fcTL` chunk has no image data before the next `fcTL` or `IEND`.
+    MissingFrameData,
+
+    /// An animation frame doesn't fit on the canvas: its offset plus its size
+    /// is more than the `IHDR` width or height.
+    FrameOutOfBounds,
 }
 
 impl fmt::Display for Error {
@@ -278,6 +297,15 @@ impl fmt::Display for Error {
             Error::InvalidSegmentCount { expected, actual } => {
                 write!(f, "got {actual} compressed segments, expected {expected}")
             }
+            Error::NotAnimated => f.write_str("no acTL chunk: the PNG isn't animated"),
+            Error::FrameSequenceMismatch { expected, actual } => {
+                write!(f, "frame sequence number is {actual}, expected {expected}")
+            }
+            Error::FrameCountMismatch { expected, actual } => {
+                write!(f, "animation has {actual} frames, expected {expected}")
+            }
+            Error::MissingFrameData => f.write_str("fcTL chunk has no frame data"),
+            Error::FrameOutOfBounds => f.write_str("animation frame doesn't fit on the canvas"),
             Error::UnexpectedCriticalChunk(chunk_type) => {
                 write!(
                     f,

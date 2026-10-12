@@ -1,6 +1,9 @@
 #![cfg(test)]
 
-use super::{header_data, transparency_data, write_chunk, write_image_data, write_signature};
+use super::{
+    header_data, transparency_data, write_chunk, write_frame_data, write_image_data,
+    write_signature,
+};
 use crate::ChunkReader;
 use crate::png::{
     ChunkType, ColorType, ImageHeader, Interlace, Palette, PaletteAlpha, SIGNATURE, Transparency,
@@ -221,4 +224,36 @@ fn transparency_data_is_what_parse_reads() {
             "{transparency:?}"
         );
     }
+}
+
+// ---------- write_frame_data ----------
+
+#[test]
+fn frame_data_splits_with_sequence_numbers() {
+    let mut out = Vec::new();
+    let mut sequence = 5;
+
+    // 4 bytes of sequence number leave 2 bytes of data per chunk.
+    write_frame_data(&mut out, &[1, 2, 3, 4, 5], &mut sequence, 6);
+
+    assert_eq!(
+        read_back(&out),
+        [
+            ("fdAT".to_string(), vec![0, 0, 0, 5, 1, 2]),
+            ("fdAT".to_string(), vec![0, 0, 0, 6, 3, 4]),
+            ("fdAT".to_string(), vec![0, 0, 0, 7, 5]),
+        ]
+    );
+    assert_eq!(sequence, 8);
+}
+
+#[test]
+fn empty_frame_data_still_gets_one_chunk() {
+    let mut out = Vec::new();
+    let mut sequence = 0;
+
+    write_frame_data(&mut out, &[], &mut sequence, 100);
+
+    assert_eq!(read_back(&out), [("fdAT".to_string(), vec![0, 0, 0, 0])]);
+    assert_eq!(sequence, 1);
 }

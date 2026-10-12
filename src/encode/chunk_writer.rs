@@ -77,5 +77,33 @@ pub(crate) fn write_image_data(out: &mut Vec<u8>, compressed: &[u8], max_length:
     }
 }
 
+/// Appends the zlib stream `compressed` of an animation frame after the first
+/// as `fdAT` chunks, like [`write_image_data`] does `IDAT`s: each at most
+/// `max_length` bytes, its sequence number included, and at least one. Each
+/// chunk takes the next number from `sequence`, which is left at the one after
+/// the last.
+pub(crate) fn write_frame_data(
+    out: &mut Vec<u8>,
+    compressed: &[u8],
+    sequence: &mut u32,
+    max_length: usize,
+) {
+    let piece_length = max_length - 4;
+    let mut data = Vec::with_capacity(compressed.len().min(piece_length) + 4);
+    let mut write = |piece: &[u8]| {
+        data.clear();
+        data.extend_from_slice(&sequence.to_be_bytes());
+        data.extend_from_slice(piece);
+        write_chunk(out, ChunkType::FDAT, &data);
+        *sequence += 1;
+    };
+
+    if compressed.is_empty() {
+        write(compressed);
+    } else {
+        compressed.chunks(piece_length).for_each(write);
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.0
+
+Animated PNG (APNG) support.
+
+### Breaking
+
+- `EncodeOptions` has a new field, `crop_frames`. Code that lists every field
+  without `..EncodeOptions::default()` needs to add it. It's off by default,
+  and only affects animations.
+
+### Added
+
+- `decode_animation` and `Decoder::decode_animation` decode every frame of an
+  animated PNG into an `AnimatedImage` of `Frame`s, each with its `fcTL`
+  control and its pixels in the file's own format. `AnimatedImage::to_bitmaps`
+  and `Compositor` draw them onto the canvas, with their disposal and blending,
+  as 8-bit RGBA.
+- `encode_animation`, `Encoder::encode_animation` and
+  `Encoder::encode_animation_into` write an animated PNG from an
+  `AnimationRef` of `FrameRef`s, with frame offsets, delays, disposal and
+  blending, the number of plays, and an optional default image outside the
+  animation.
+- `png::AnimationControl`, `png::FrameControl`, `png::DisposeOp` and
+  `png::BlendOp` parse and write the `acTL` and `fcTL` chunks, and
+  `ChunkType::ACTL`, `ChunkType::FCTL` and `ChunkType::FDAT` name them.
+- `EncodeOptions::crop_frames` crops each whole-canvas frame to the area that
+  changed since the frame before, when that can't change what's shown.
+- `PaletteMode::Auto` applies to animations: they're written as indexed color
+  when every frame and the default image have at most 256 colors between them.
+- `PngChunks::animation_control` and `PngChunks::frame_controls` give an
+  animated PNG's `acTL` and `fcTL` chunks from `read_chunks`, checked as
+  `decode_animation` checks them. A broken animation reads as a still image,
+  or fails with `DecodeOptions::strict_ancillary`.
+- `Error::NotAnimated`, `Error::FrameSequenceMismatch`,
+  `Error::FrameCountMismatch`, `Error::MissingFrameData` and
+  `Error::FrameOutOfBounds`.
+
+### Changed
+
+- `PngChunks::unknown_chunks` no longer lists `acTL`, `fcTL` and `fdAT`.
+- Extra chunks of type `acTL`, `fcTL` and `fdAT` are never written, even with
+  `EncodeOptions::keep_unsafe_chunks`. Re-encoding a decoded APNG with its
+  chunks kept used to write the old animation chunks around the new image data,
+  making a broken animation; it now writes a still image.
+
 ## 0.2.0
 
 Faster encoding of large images, on threads or anywhere else.

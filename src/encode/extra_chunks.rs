@@ -12,6 +12,8 @@
 //!   depend on the image data, which re-encoding rewrites, so they're skipped
 //!   unless [`EncodeOptions::keep_unsafe_chunks`](crate::EncodeOptions::keep_unsafe_chunks)
 //!   is set.
+//! - `acTL`, `fcTL` and `fdAT` chunks are skipped: the encoder writes an
+//!   animation's itself, and they'd be wrong for any other image.
 //! - A chunk of a type the encoder writes itself for this image, from
 //!   [`ImageRef::with_transparency`](crate::ImageRef::with_transparency) or
 //!   [`ImageRef::with_metadata`](crate::ImageRef::with_metadata), is skipped,
@@ -49,12 +51,20 @@ pub(crate) fn validate_extra_chunks(chunks: &[OwnedChunk]) -> Result<(), Error> 
 
 /// Whether the encoder writes chunks of `chunk_type` itself for `image`:
 ///
+/// - `acTL`, `fcTL` and `fdAT` always. An animation's are written from its
+///   frames, and a single image's would describe frames it doesn't have.
 /// - `tRNS` if the image has transparency.
 /// - Each metadata chunk type the image's [`Metadata`](crate::Metadata) has a
 ///   value for: `gAMA` if it has a gamma, and so on. `tEXt`, `zTXt` and `iTXt`
 ///   all count as written if it has any text, so raw text chunks never mix with
 ///   the typed ones.
 pub(crate) fn encoder_writes(chunk_type: ChunkType, image: &ImageRef<'_>) -> bool {
+    if matches!(
+        chunk_type,
+        ChunkType::ACTL | ChunkType::FCTL | ChunkType::FDAT
+    ) {
+        return true;
+    }
     if chunk_type == ChunkType::TRNS {
         return image.transparency().is_some();
     }

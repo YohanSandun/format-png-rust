@@ -22,7 +22,9 @@
 //! To support a new chunk: add a field and a `with_` method to [`ImageRef`], and
 //! write it in `Encoder::encode_into` at the position the spec gives it.
 
+mod animation_ref;
 mod chunk_writer;
+mod crop;
 mod encoder;
 mod extra_chunks;
 mod filter;
@@ -35,6 +37,7 @@ mod parallel;
 mod prepared;
 mod strip;
 
+pub use animation_ref::{AnimationRef, FrameRef};
 pub use encoder::Encoder;
 pub use image_ref::ImageRef;
 pub use options::{EncodeOptions, FilterStrategy, PaletteMode, StripChunks, Threads};

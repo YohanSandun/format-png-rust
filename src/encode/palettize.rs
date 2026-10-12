@@ -5,6 +5,7 @@
 //! distinct colors, counting alpha, so every pixel gets an exact palette entry.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use crate::png::palette::MAX_ENTRIES;
 use crate::png::{ColorType, ImageHeader, Palette, PaletteAlpha, Transparency};
@@ -43,11 +44,30 @@ pub(crate) fn palettize(
     transparency: Option<&Transparency>,
     out: &mut Vec<u8>,
 ) -> Option<Palettized> {
-    let channels = match (header.color_type, header.bit_depth) {
+    palettize_all(&[(*header, data)], transparency, out).map(|(palettized, _)| palettized)
+}
+
+/// Like [`palettize`], but for several images sharing one palette, such as
+/// the frames of an animation: at most 256 distinct colors among them all.
+/// Every image has the same color type and bit depth, and `images` isn't empty.
+///
+/// The indices of every image are written to `out` one after the other, and
+/// the range each image's take is returned with the result, in order. The
+/// result's header is the first image's.
+pub(crate) fn palettize_all<'d>(
+    images: &[(ImageHeader, &'d [u8])],
+    transparency: Option<&Transparency>,
+    out: &mut Vec<u8>,
+) -> Option<(Palettized, Vec<Range<usize>>)> {
+    let (first, _) = images.first()?;
+    let channels = match (first.color_type, first.bit_depth) {
         (ColorType::Rgb, 8) => 3,
         (ColorType::Rgba, 8) => 4,
         _ => return None,
     };
+    debug_assert!(images.iter().all(|(header, _)| {
+        (header.color_type, header.bit_depth) == (first.color_type, first.bit_depth)
+    }));
     let key = match transparency {
         Some(Transparency::Rgb(rgb)) => Some(*rgb),
         _ => None,
@@ -60,14 +80,14 @@ pub(crate) fn palettize(
         [pixel[0], pixel[1], pixel[2], if keyed { 0 } else { 255 }]
     };
     // 8-bit rows have no padding, so the pixels are back to back.
-    let pixels = || data.chunks_exact(channels).map(rgba);
+    let pixels = |data: &'d [u8]| data.chunks_exact(channels).map(rgba);
 
     // 1. The distinct colors, in order of first appearance. Runs of one color
     //    are common, so the last color is checked before the map.
     let mut colors: Vec<[u8; 4]> = Vec::new();
     let mut seen: HashSet<[u8; 4]> = HashSet::new();
     let mut last = None;
-    for color in pixels() {
+    for color in images.iter().flat_map(|(_, data)| pixels(data)) {
         if last == Some(color) {
             continue;
         }
@@ -108,32 +128,40 @@ pub(crate) fn palettize(
         5..=16 => 4,
         _ => 8,
     };
-    let header = ImageHeader {
+    let indexed = |header: &ImageHeader| ImageHeader {
         bit_depth,
         color_type: ColorType::Indexed,
         ..*header
     };
-    // Can't fail: indexed rows are never longer than the RGB rows they replace.
-    let stride = header.stride().ok()?;
-    out.clear();
-    out.resize(stride * header.height as usize, 0);
 
-    let width = header.width as usize;
-    let bits = usize::from(bit_depth);
-    let per_byte = 8 / bits;
-    let mut indices = pixels().map(|color| index[&color]);
-    for out_row in out.chunks_exact_mut(stride) {
-        for x in 0..width {
-            let i = indices.next().expect("one pixel per index");
-            out_row[x / per_byte] |= i << (8 - bits * (x % per_byte + 1));
+    out.clear();
+    let mut ranges = Vec::with_capacity(images.len());
+    for (header, data) in images {
+        let header = indexed(header);
+        // Can't fail: indexed rows are never longer than the RGB rows they replace.
+        let stride = header.stride().ok()?;
+        let start = out.len();
+        out.resize(start + stride * header.height as usize, 0);
+
+        let width = header.width as usize;
+        let bits = usize::from(bit_depth);
+        let per_byte = 8 / bits;
+        let mut indices = pixels(data).map(|color| index[&color]);
+        for out_row in out[start..].chunks_exact_mut(stride) {
+            for x in 0..width {
+                let i = indices.next().expect("one pixel per index");
+                out_row[x / per_byte] |= i << (8 - bits * (x % per_byte + 1));
+            }
         }
+        ranges.push(start..out.len());
     }
 
-    Some(Palettized {
-        header,
+    let palettized = Palettized {
+        header: indexed(first),
         palette,
         transparency,
-    })
+    };
+    Some((palettized, ranges))
 }
 
 #[cfg(test)]

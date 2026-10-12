@@ -1,3 +1,4 @@
+mod animation;
 mod chunk_reader;
 mod decoder;
 pub(crate) mod deinterlace;

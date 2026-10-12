@@ -1,8 +1,11 @@
 //! PNG format types shared by the decoder and the encoder.
 
 pub(crate) mod adam7;
+mod animated_image;
+pub(crate) mod animation;
 mod bitmap;
 mod chunk;
+mod compositor;
 pub(crate) mod crc;
 mod filter;
 mod header;
@@ -13,8 +16,11 @@ pub(crate) mod palette;
 mod png_chunks;
 mod transparency;
 
+pub use animated_image::{AnimatedImage, Frame};
+pub use animation::{AnimationControl, BlendOp, DisposeOp, FrameControl};
 pub use bitmap::{Bitmap, PixelFormat};
 pub use chunk::{Chunk, ChunkType};
+pub use compositor::Compositor;
 pub use filter::FilterType;
 pub use header::{ColorType, ImageHeader, Interlace};
 pub use image::Image;

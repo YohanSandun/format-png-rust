@@ -82,6 +82,12 @@ impl<'a> ImageRef<'a> {
         self
     }
 
+    /// The same image with the pixels in `data`, for an animation's default image.
+    pub(crate) fn with_data(mut self, data: &'a [u8]) -> Self {
+        self.data = data;
+        self
+    }
+
     /// The image's header.
     #[must_use]
     pub fn header(&self) -> &ImageHeader {

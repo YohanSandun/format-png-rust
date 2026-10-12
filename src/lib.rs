@@ -72,6 +72,32 @@
 //!   color, and [`StripChunks`] leaves out ancillary chunks, both to make files
 //!   smaller.
 //!
+//! # Animation
+//!
+//! Animated PNGs (APNG) are decoded with [`decode_animation`], which returns
+//! an [`AnimatedImage`] of [`Frame`]s, and encoded with [`encode_animation`]
+//! from an [`AnimationRef`] of [`FrameRef`]s. [`AnimatedImage::to_bitmaps`] or
+//! a [`Compositor`] draws the frames onto the canvas, as a viewer shows them.
+//! The chunk types are in [`png::AnimationControl`] and [`png::FrameControl`].
+//! [`decode`] and [`encode`] still read and write just the default image, and
+//! [`read_chunks`] gives the `acTL` and `fcTL` chunks without decoding any frame.
+//! [`EncodeOptions::crop_frames`] and [`PaletteMode::Auto`] make animations smaller.
+//!
+//! ```
+//! use format_png::{AnimationRef, ColorType, FrameRef, ImageHeader, Interlace};
+//!
+//! let header = ImageHeader { width: 1, height: 1, bit_depth: 8, color_type: ColorType::Rgba, interlace: Interlace::None };
+//! let (red, blue) = ([255, 0, 0, 255], [0, 0, 255, 255]);
+//! let frames = [FrameRef::new(1, 1, &red), FrameRef::new(1, 1, &blue).with_delay(1, 2)];
+//! let png = format_png::encode_animation(AnimationRef::new(header, &frames))?;
+//!
+//! let animation = format_png::decode_animation(&png)?;
+//! let bitmaps = animation.to_bitmaps()?;
+//! assert_eq!(bitmaps[1].data(), blue);
+//! assert_eq!(format_png::decode_rgba8(&png)?.data(), red); // the default image
+//! # Ok::<(), format_png::Error>(())
+//! ```
+//!
 //! # Threads and async
 //!
 //! Every type is `Send` and `Sync`, so decoders, encoders and images can move
@@ -105,7 +131,9 @@
 //!   [`ImageRef::with_chunks`], and read with [`read_chunks`] or a [`ChunkReader`].
 //! - Color management: gamma, chromaticities, ICC profiles and `cICP` are read
 //!   and written but not applied to the pixels.
-//! - Animated PNG: only the default image is decoded and encoded.
+//! - Animated PNG: [`EncodeOptions::crop_frames`] leaves frames whose blending
+//!   or disposal would make cropping change what's shown, and frames that
+//!   don't change aren't merged into the one before.
 //! - Lossy encoding: [`PaletteMode::Auto`] only converts images that fit a
 //!   palette exactly.
 
@@ -120,13 +148,13 @@ pub mod png;
 
 pub use decode::{ChunkReader, DecodeOptions, Decoder};
 pub use encode::{
-    EncodeOptions, Encoder, FilterStrategy, ImageRef, PaletteMode, PreparedPng, SegmentCompression,
-    StripChunks, Threads, compress_segment,
+    AnimationRef, EncodeOptions, Encoder, FilterStrategy, FrameRef, ImageRef, PaletteMode,
+    PreparedPng, SegmentCompression, StripChunks, Threads, compress_segment,
 };
 pub use error::Error;
 pub use png::{
-    Bitmap, ChunkPosition, ColorType, Image, ImageHeader, Interlace, Metadata, OwnedChunk, Palette,
-    PaletteAlpha, PixelFormat, PngChunks, Transparency,
+    AnimatedImage, Bitmap, ChunkPosition, ColorType, Compositor, Frame, Image, ImageHeader,
+    Interlace, Metadata, OwnedChunk, Palette, PaletteAlpha, PixelFormat, PngChunks, Transparency,
 };
 pub use rust_deflate::CompressionLevel;
 /// Which kind of DEFLATE blocks the encoder writes; see
@@ -174,6 +202,20 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
     Decoder::new().decode(data)
 }
 
+/// Decodes every frame of an animated PNG (APNG) with default options; see
+/// [`AnimatedImage`].
+///
+/// This is the simple API. To decode many animations, reuse a [`Decoder`] and
+/// call [`Decoder::decode_animation`] instead.
+///
+/// # Errors
+///
+/// Same as [`Decoder::decode_animation`]: notably [`Error::NotAnimated`] for a
+/// PNG that isn't animated, which [`decode`] reads.
+pub fn decode_animation(data: &[u8]) -> Result<AnimatedImage, Error> {
+    Decoder::new().decode_animation(data)
+}
+
 /// Reads and parses every chunk of a PNG with default options, without
 /// decompressing the image data; see [`PngChunks`].
 ///
@@ -209,6 +251,18 @@ pub fn read_header(data: &[u8]) -> Result<ImageHeader, Error> {
 /// Same as [`Encoder::encode_into`].
 pub fn encode(image: ImageRef<'_>) -> Result<Vec<u8>, Error> {
     Encoder::new().encode(image)
+}
+
+/// Encodes an animated PNG (APNG) with default options; see [`AnimationRef`].
+///
+/// This is the simple API. To encode many animations, reuse an [`Encoder`] and
+/// call [`Encoder::encode_animation_into`] instead.
+///
+/// # Errors
+///
+/// Same as [`Encoder::encode_animation_into`].
+pub fn encode_animation(animation: AnimationRef<'_>) -> Result<Vec<u8>, Error> {
+    Encoder::new().encode_animation(animation)
 }
 
 /// Encodes 8-bit RGBA pixels to PNG with default options: the reverse of

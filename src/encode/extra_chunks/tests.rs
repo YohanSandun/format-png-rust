@@ -259,3 +259,18 @@ fn write_extra_chunks_skips_what_should_write_rejects() {
 
     assert_eq!(written(&out), [("ruSt".to_string(), b"safe".to_vec())]);
 }
+
+#[test]
+fn animation_chunks_are_never_written_raw() {
+    let chunks = [
+        chunk(b"acTL", &[0; 8], BeforePalette),
+        chunk(b"fcTL", &[0; 26], BeforeImageData),
+        chunk(b"fdAT", &[0; 5], AfterImageData),
+    ];
+    let image = image(&chunks);
+
+    for chunk in &chunks {
+        assert!(encoder_writes(chunk.chunk_type(), &image));
+        assert!(!should_write(chunk, &image, true));
+    }
+}

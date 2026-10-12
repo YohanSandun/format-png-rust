@@ -99,5 +99,10 @@ fn public_types_can_be_used_across_threads() {
     assert_send_sync::<crate::png::metadata::Text>();
     assert_send_sync::<crate::png::metadata::IccProfile>();
     assert_send_sync::<crate::png::metadata::Exif>();
+    assert_send_sync::<crate::AnimatedImage>();
+    assert_send_sync::<crate::Frame>();
+    assert_send_sync::<crate::Compositor>();
+    assert_send_sync::<crate::AnimationRef<'static>>();
+    assert_send_sync::<crate::FrameRef<'static>>();
     assert_send_sync::<Error>();
 }

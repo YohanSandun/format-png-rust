@@ -50,6 +50,12 @@ impl ChunkType {
     pub const CICP: ChunkType = ChunkType(*b"cICP");
     /// Exif metadata.
     pub const EXIF: ChunkType = ChunkType(*b"eXIf");
+    /// Animation control: the number of frames and plays of an animated PNG.
+    pub const ACTL: ChunkType = ChunkType(*b"acTL");
+    /// Frame control: one animation frame's size, position, delay and drawing.
+    pub const FCTL: ChunkType = ChunkType(*b"fcTL");
+    /// Frame data: the image data of an animation frame after the first.
+    pub const FDAT: ChunkType = ChunkType(*b"fdAT");
 
     /// Creates a chunk type, checking every byte is an ASCII letter.
     ///

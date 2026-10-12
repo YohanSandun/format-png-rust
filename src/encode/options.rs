@@ -30,6 +30,22 @@ pub struct EncodeOptions {
     /// [`CompressionLevel::NONE`] whatever the strategy.
     pub compression_strategy: CompressionStrategy,
 
+    /// Whether to crop each frame of an animation to the area that changed
+    /// since the frame before, which makes animations of whole-canvas frames,
+    /// such as those converted from video or GIF, much smaller. Off by default.
+    /// Still images aren't affected.
+    ///
+    /// What viewers show doesn't change: a frame is only cropped when it and
+    /// the frame before cover the whole canvas, the frame before is drawn with
+    /// [`BlendOp::Source`](crate::png::BlendOp::Source) and kept with
+    /// [`DisposeOp::None`](crate::png::DisposeOp::None), and the frame is drawn
+    /// with `BlendOp::Source` and not disposed with
+    /// [`DisposeOp::Background`](crate::png::DisposeOp::Background). A frame
+    /// the same as the one before becomes a single pixel. The frames
+    /// [`decode_animation`](crate::decode_animation) gives back are the
+    /// cropped ones.
+    pub crop_frames: bool,
+
     /// How to filter each row before compressing. [`FilterStrategy::Adaptive`] by default.
     pub filter: FilterStrategy,
 
@@ -59,6 +75,7 @@ impl Default for EncodeOptions {
         Self {
             compression: CompressionLevel::MEDIUM,
             compression_strategy: CompressionStrategy::Dynamic,
+            crop_frames: false,
             filter: FilterStrategy::Adaptive,
             keep_unsafe_chunks: false,
             palette: PaletteMode::Keep,
@@ -120,6 +137,9 @@ pub enum PaletteMode {
     /// - Extra chunks that aren't safe to copy, such as `bKGD` and `sBIT`, are
     ///   dropped even with [`EncodeOptions::keep_unsafe_chunks`]: they describe
     ///   the old color type.
+    ///
+    /// An animation's frames share one palette, so it's converted only when
+    /// every frame and the default image have at most 256 colors between them.
     Auto,
 }
 

@@ -1,7 +1,10 @@
-use crate::png::{Chunk, ChunkType, ImageChunks, ImageHeader, Metadata, Palette, Transparency};
+use crate::png::{
+    AnimationControl, Chunk, ChunkType, FrameControl, ImageChunks, ImageHeader, Metadata, Palette,
+    Transparency,
+};
 
 /// The chunk types this crate parses. Every other chunk is unknown to it.
-const KNOWN: [ChunkType; 16] = [
+const KNOWN: [ChunkType; 19] = [
     ChunkType::IHDR,
     ChunkType::PLTE,
     ChunkType::IDAT,
@@ -18,6 +21,9 @@ const KNOWN: [ChunkType; 16] = [
     ChunkType::ICCP,
     ChunkType::CICP,
     ChunkType::EXIF,
+    ChunkType::ACTL,
+    ChunkType::FCTL,
+    ChunkType::FDAT,
 ];
 
 /// Every chunk of a PNG, read and parsed, without decompressing the image data.
@@ -29,7 +35,9 @@ const KNOWN: [ChunkType; 16] = [
 ///
 /// The known chunks are parsed into [`header`](Self::header),
 /// [`palette`](Self::palette), [`transparency`](Self::transparency) and
-/// [`metadata`](Self::metadata). Every chunk is also kept raw, in file order, in
+/// [`metadata`](Self::metadata), and an animated PNG's `acTL` and `fcTL` chunks
+/// into [`animation_control`](Self::animation_control) and
+/// [`frame_controls`](Self::frame_controls). Every chunk is also kept raw, in file order, in
 /// [`chunks`](Self::chunks), including private, custom and unknown ones, critical
 /// or not; [`unknown_chunks`](Self::unknown_chunks) gives just the ones this crate
 /// doesn't parse. Raw chunks borrow from the input, so it must outlive this.
@@ -55,6 +63,8 @@ pub struct PngChunks<'a> {
     header: ImageHeader,
     chunks: Vec<Chunk<'a>>,
     found: ImageChunks,
+    animation: Option<AnimationControl>,
+    frame_controls: Vec<FrameControl>,
 }
 
 impl<'a> PngChunks<'a> {
@@ -63,7 +73,20 @@ impl<'a> PngChunks<'a> {
             header,
             chunks,
             found,
+            animation: None,
+            frame_controls: Vec::new(),
         }
+    }
+
+    /// Adds an animated PNG's `acTL` chunk and its frames' `fcTL` chunks.
+    pub(crate) fn with_animation(
+        mut self,
+        control: AnimationControl,
+        frame_controls: Vec<FrameControl>,
+    ) -> Self {
+        self.animation = Some(control);
+        self.frame_controls = frame_controls;
+        self
     }
 
     /// The `IHDR` chunk: the image's size and pixel format.
@@ -96,6 +119,27 @@ impl<'a> PngChunks<'a> {
         &self.found.metadata
     }
 
+    /// The `acTL` chunk, if this is an animated PNG (APNG): the number of
+    /// frames and plays.
+    ///
+    /// The animation's chunks are checked as
+    /// [`decode_animation`](crate::decode_animation) checks them, without
+    /// decompressing any frame. If they're invalid or laid out wrong, this is
+    /// `None` and the file reads as a still image, unless
+    /// [`DecodeOptions::strict_ancillary`](crate::DecodeOptions::strict_ancillary)
+    /// is set, which makes that an error.
+    #[must_use]
+    pub fn animation_control(&self) -> Option<&AnimationControl> {
+        self.animation.as_ref()
+    }
+
+    /// Each frame's `fcTL` chunk, in order, if this is an animated PNG; empty
+    /// when [`animation_control`](Self::animation_control) is `None`.
+    #[must_use]
+    pub fn frame_controls(&self) -> &[FrameControl] {
+        &self.frame_controls
+    }
+
     /// Every chunk from `IHDR` to `IEND`, in file order, raw. Anything after
     /// `IEND` isn't read.
     #[must_use]
@@ -114,6 +158,7 @@ impl<'a> PngChunks<'a> {
 
     /// The chunks this crate doesn't parse, in file order: private and custom
     /// chunks, critical or not, and public ones not supported yet, such as `bKGD`.
+    /// The animation chunks `acTL`, `fcTL` and `fdAT` aren't among them.
     /// Read them with [`Chunk::data`].
     pub fn unknown_chunks(&self) -> impl Iterator<Item = Chunk<'a>> + '_ {
         self.chunks

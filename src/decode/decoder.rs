@@ -1,3 +1,4 @@
+use super::animation::read_animation;
 use super::chunk_reader::ChunkReader;
 use super::options::DecodeOptions;
 use crate::convert::{Source, convert, is_unchanged};
@@ -7,8 +8,8 @@ use crate::decode::unfilter::unfilter;
 use crate::error::Error;
 use crate::png::adam7::PASSES;
 use crate::png::{
-    Bitmap, Chunk, ChunkType, Image, ImageChunks, ImageHeader, Interlace, Metadata, OwnedChunk,
-    Palette, PixelFormat, PngChunks, Transparency,
+    AnimatedImage, Bitmap, Chunk, ChunkType, Frame, Image, ImageChunks, ImageHeader, Interlace,
+    Metadata, OwnedChunk, Palette, PixelFormat, PngChunks, Transparency,
 };
 use rust_deflate::{Decompressor, OutputOptions};
 
@@ -173,6 +174,9 @@ impl Decoder {
     /// decoder's [`palette`](Self::palette) and other accessors for the last
     /// image decoded aren't changed.
     ///
+    /// An animated PNG's `acTL` and `fcTL` chunks are parsed too; see
+    /// [`PngChunks::animation_control`].
+    ///
     /// ```
     /// use format_png::Decoder;
     /// use format_png::png::ChunkType;
@@ -191,7 +195,10 @@ impl Decoder {
     /// The same chunk errors as [`decode_into`](Self::decode_into): everything
     /// except [`Error::Decompression`], [`Error::ImageDataTooShort`],
     /// [`Error::ImageDataTooLong`], [`Error::InvalidFilterType`] and
-    /// [`Error::ImageTooLarge`], which need the image data decompressed.
+    /// [`Error::ImageTooLarge`], which need the image data decompressed. With
+    /// [`DecodeOptions::strict_ancillary`], also the animation errors of
+    /// [`decode_animation`](Self::decode_animation), other than
+    /// [`Error::NotAnimated`].
     pub fn read_chunks<'a>(&mut self, data: &'a [u8]) -> Result<PngChunks<'a>, Error> {
         let mut chunks = self.chunks(data)?;
         let (header, header_chunk) = Self::read_image_header_chunk(&mut chunks)?;
@@ -210,7 +217,17 @@ impl Decoder {
             |chunk| all.push(chunk),
         )?;
 
-        Ok(PngChunks::new(header, all, found))
+        let png = PngChunks::new(header, all, found);
+        // `all` starts with `IHDR`, which `read_animation` doesn't expect.
+        match read_animation(&header, &png.chunks()[1..]) {
+            Ok(layout) => {
+                let controls = layout.frames.iter().map(|frame| frame.control).collect();
+                Ok(png.with_animation(layout.control, controls))
+            }
+            Err(Error::NotAnimated) => Ok(png),
+            Err(error) if self.options.strict_ancillary => Err(error),
+            Err(_) => Ok(png),
+        }
     }
 
     /// Decodes the whole image into the PNG's own pixel format; see [`Image`].
@@ -270,7 +287,6 @@ impl Decoder {
 
         let mut chunks = self.chunks(data)?;
         let header = Self::read_image_header(&mut chunks)?;
-        let scanline_size = header.scanline_size()?;
 
         self.compressed.clear();
         let found = collect_image_data(
@@ -280,6 +296,20 @@ impl Decoder {
             &mut self.decompressor,
             &mut self.compressed,
         )?;
+
+        self.decompress_image(&header, out)?;
+
+        self.chunks = found;
+        Ok(header)
+    }
+
+    /// Decompresses `self.compressed`, the zlib stream of an image with
+    /// `header`, and unfilters it into `out`, replacing its contents. Shared by
+    /// whole images and animation frames, whose header has the frame's size.
+    ///
+    /// Errors: the decompression and unfiltering errors of `decode_into`.
+    fn decompress_image(&mut self, header: &ImageHeader, out: &mut Vec<u8>) -> Result<(), Error> {
+        let scanline_size = header.scanline_size()?;
 
         // The decompressor appends, so clear what the previous image left here.
         self.scanlines.clear();
@@ -311,11 +341,88 @@ impl Decoder {
             Interlace::None => {
                 unfilter(&self.scanlines, header.stride()?, header.filter_bpp(), out)?
             }
-            Interlace::Adam7 => self.unfilter_adam7(&header, out)?,
+            Interlace::Adam7 => self.unfilter_adam7(header, out)?,
         }
 
-        self.chunks = found;
-        Ok(header)
+        Ok(())
+    }
+
+    /// Decodes every frame of an animated PNG (APNG); see [`AnimatedImage`].
+    ///
+    /// Each frame is decoded into the PNG's own pixel format, like
+    /// [`decode`](Self::decode), and only its own area; see
+    /// [`AnimatedImage::to_bitmaps`] to composite them for display. A default
+    /// image that isn't part of the animation isn't decoded. The options apply
+    /// as for [`decode_into`](Self::decode_into), and afterwards
+    /// [`palette`](Self::palette) and the other accessors describe this image.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotAnimated`] if the PNG has no `acTL` chunk. Decode it with
+    ///   [`decode`](Self::decode) instead.
+    /// - Any error from [`decode_into`](Self::decode_into), for the PNG as a
+    ///   whole and for each frame's image data.
+    /// - [`Error::FrameSequenceMismatch`], [`Error::FrameCountMismatch`],
+    ///   [`Error::MissingFrameData`], [`Error::FrameOutOfBounds`],
+    ///   [`Error::MisplacedChunk`], [`Error::DuplicateChunk`],
+    ///   [`Error::InvalidChunkLength`] or [`Error::InvalidChunkData`] if the
+    ///   `acTL`, `fcTL` and `fdAT` chunks aren't valid or laid out correctly.
+    pub fn decode_animation(&mut self, data: &[u8]) -> Result<AnimatedImage, Error> {
+        self.chunks = ImageChunks::default();
+
+        let mut chunks = self.chunks(data)?;
+        let header = Self::read_image_header(&mut chunks)?;
+
+        let mut all = Vec::new();
+        let found = read_image_chunks(
+            &mut chunks,
+            &header,
+            &self.options,
+            &mut self.decompressor,
+            |chunk| all.push(chunk),
+        )?;
+        let layout = read_animation(&header, &all)?;
+
+        // Each frame carries the palette and transparency it needs to convert;
+        // the metadata stays with the animation.
+        let frame_chunks = ImageChunks {
+            palette: found.palette.clone(),
+            transparency: found.transparency.clone(),
+            ..ImageChunks::default()
+        };
+
+        let mut frames = Vec::with_capacity(layout.frames.len());
+        for frame in &layout.frames {
+            self.compressed.clear();
+            for piece in &frame.data {
+                self.compressed.extend_from_slice(piece);
+            }
+
+            let frame_header = ImageHeader {
+                width: frame.control.width,
+                height: frame.control.height,
+                ..header
+            };
+            let mut pixels = Vec::new();
+            self.decompress_image(&frame_header, &mut pixels)?;
+
+            let image = Image::new(
+                frame_header,
+                frame_header.stride()?,
+                pixels,
+                frame_chunks.clone(),
+            );
+            frames.push(Frame::new(frame.control, image));
+        }
+
+        self.chunks = found.clone();
+        Ok(AnimatedImage::new(
+            header,
+            layout.control,
+            frames,
+            layout.default_image_is_frame,
+            found,
+        ))
     }
 
     /// Decodes the image and converts it to `format`, for display.
