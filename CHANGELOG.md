@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Animated PNG (APNG) support.
+
+### Added
+
+- `decode_animation` and `Decoder::decode_animation` decode every frame of an
+  animated PNG into an `AnimatedImage` of `Frame`s, each with its `fcTL`
+  control and its pixels in the file's own format. `AnimatedImage::to_bitmaps`
+  and `Compositor` draw them onto the canvas, with their disposal and blending,
+  as 8-bit RGBA.
+- `encode_animation`, `Encoder::encode_animation` and
+  `Encoder::encode_animation_into` write an animated PNG from an
+  `AnimationRef` of `FrameRef`s, with frame offsets, delays, disposal and
+  blending, the number of plays, and an optional default image outside the
+  animation.
+- `png::AnimationControl`, `png::FrameControl`, `png::DisposeOp` and
+  `png::BlendOp` parse and write the `acTL` and `fcTL` chunks, and
+  `ChunkType::ACTL`, `ChunkType::FCTL` and `ChunkType::FDAT` name them.
+- `Error::NotAnimated`, `Error::FrameSequenceMismatch`,
+  `Error::FrameCountMismatch`, `Error::MissingFrameData` and
+  `Error::FrameOutOfBounds`.
+
+### Changed
+
+- Extra chunks of type `acTL`, `fcTL` and `fdAT` are never written, even with
+  `EncodeOptions::keep_unsafe_chunks`. Re-encoding a decoded APNG with its
+  chunks kept used to write the old animation chunks around the new image data,
+  making a broken animation; it now writes a still image.
+
 ## 0.2.0
 
 Faster encoding of large images, on threads or anywhere else.

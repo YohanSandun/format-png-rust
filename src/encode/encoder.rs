@@ -1,8 +1,9 @@
 use rust_deflate::{CompressionOptions, Compressor};
 
+use super::animation_ref::{AnimationRef, FrameRef};
 use super::chunk_writer::{
-    MAX_CHUNK_LENGTH, header_data, transparency_data, write_chunk, write_image_data,
-    write_signature,
+    MAX_CHUNK_LENGTH, header_data, transparency_data, write_chunk, write_frame_data,
+    write_image_data, write_signature,
 };
 use super::filter::filter_image;
 use super::image_ref::ImageRef;
@@ -16,7 +17,7 @@ use crate::encode::metadata::{
     validate_metadata, write_metadata_after_palette, write_metadata_before_palette,
 };
 use crate::error::Error;
-use crate::png::{ChunkType, Palette, Transparency};
+use crate::png::{AnimationControl, ChunkType, Metadata, Palette, Transparency};
 use crate::{ChunkPosition, ColorType, ImageHeader};
 
 /// The largest image data, in bytes, for which `PaletteMode::Auto` also
@@ -151,32 +152,8 @@ impl Encoder {
         out: &mut Vec<u8>,
         defer: bool,
     ) -> Result<Option<Deferred>, Error> {
-        let stripped_metadata;
-        let image = match self.options.strip {
-            StripChunks::Keep => image,
-            mode => {
-                stripped_metadata = image
-                    .metadata()
-                    .map(|metadata| strip_metadata(metadata, mode));
-                // No extra chunks: neither mode keeps any.
-                let mut stripped = ImageRef::new(*image.header(), image.data());
-                // An indexed image needs its palette. Any other image's palette is
-                // only a suggestion that viewers ignore, so it goes too.
-                if let Some(palette) = image
-                    .palette()
-                    .filter(|_| image.header().color_type == ColorType::Indexed)
-                {
-                    stripped = stripped.with_palette(palette);
-                }
-                if let Some(transparency) = image.transparency() {
-                    stripped = stripped.with_transparency(transparency);
-                }
-                if let Some(metadata) = &stripped_metadata {
-                    stripped = stripped.with_metadata(metadata);
-                }
-                stripped
-            }
-        };
+        let mut stripped_metadata = None;
+        let image = strip(image, self.options.strip, &mut stripped_metadata);
 
         validate(&image)?;
 
@@ -261,42 +238,15 @@ impl Encoder {
         defer: bool,
     ) -> Result<Option<Deferred>, Error> {
         out.clear();
-        self.scanlines.clear();
         self.compressed.clear();
 
         let header = image.header();
+        let compression = self.compression_options();
 
-        let compression = CompressionOptions::new()
-            .level(self.options.compression)
-            .strategy(self.options.compression_strategy);
-
-        filter_image(
-            self.options.filter,
-            header,
-            image.data(),
-            &mut self.scanlines,
-        )?;
-        let segmented = self.scanlines.len() > SEGMENT_SIZE;
-        let defer = defer && segmented;
-        match self.options.threads.parallel_count() {
-            _ if defer => {}
-            // A single segment would compress the same way on one thread.
-            Some(threads) if segmented => compress_zlib_segments(
-                &self.scanlines,
-                SegmentCompression {
-                    level: self.options.compression,
-                    strategy: self.options.compression_strategy,
-                },
-                threads,
-                &mut self.compressed,
-            ),
-            _ => {
-                self.compressor.compress_zlib_into_with(
-                    &self.scanlines,
-                    &mut self.compressed,
-                    compression,
-                );
-            }
+        self.filter(header, image.data())?;
+        let defer = defer && self.scanlines.len() > SEGMENT_SIZE;
+        if !defer {
+            self.compress_scanlines();
         }
 
         write_signature(out);
@@ -338,12 +288,236 @@ impl Encoder {
         write_chunk(out, ChunkType::IEND, &[]);
         Ok(None)
     }
+
+    fn compression_options(&self) -> CompressionOptions {
+        CompressionOptions::new()
+            .level(self.options.compression)
+            .strategy(self.options.compression_strategy)
+    }
+
+    /// Filters the rows of `data`, an image with `header`, into `self.scanlines`,
+    /// replacing its contents.
+    fn filter(&mut self, header: &ImageHeader, data: &[u8]) -> Result<(), Error> {
+        self.scanlines.clear();
+        filter_image(self.options.filter, header, data, &mut self.scanlines)
+    }
+
+    /// Compresses `self.scanlines` into `self.compressed`, replacing its
+    /// contents: in segments on several threads if the options ask for it and
+    /// there's more than one segment, otherwise as one stream.
+    fn compress_scanlines(&mut self) {
+        self.compressed.clear();
+        let segmented = self.scanlines.len() > SEGMENT_SIZE;
+        match self.options.threads.parallel_count() {
+            // A single segment would compress the same way on one thread.
+            Some(threads) if segmented => compress_zlib_segments(
+                &self.scanlines,
+                SegmentCompression {
+                    level: self.options.compression,
+                    strategy: self.options.compression_strategy,
+                },
+                threads,
+                &mut self.compressed,
+            ),
+            _ => {
+                let compression = self.compression_options();
+                self.compressor.compress_zlib_into_with(
+                    &self.scanlines,
+                    &mut self.compressed,
+                    compression,
+                );
+            }
+        }
+    }
+
+    /// Encodes an animated PNG (APNG); see [`AnimationRef`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`encode_animation_into`](Self::encode_animation_into).
+    pub fn encode_animation(&mut self, animation: AnimationRef<'_>) -> Result<Vec<u8>, Error> {
+        let mut out = Vec::new();
+        self.encode_animation_into(animation, &mut out)?;
+        Ok(out)
+    }
+
+    /// Like [`encode_animation`](Self::encode_animation), but writes the PNG to
+    /// `out`, as [`encode_into`](Self::encode_into) does.
+    ///
+    /// The PNG has the chunks [`encode_into`](Self::encode_into) writes, with an
+    /// `acTL` chunk after `IHDR`, and each frame as an `fcTL` chunk followed by
+    /// its image data: `IDAT` chunks for the first frame, unless there's a
+    /// separate default image, and `fdAT` chunks for the others.
+    ///
+    /// [`EncodeOptions::strip`] and the filter, compression and thread options
+    /// apply as for a single image. [`PaletteMode::Auto`] doesn't: the frames
+    /// share one palette, which it can't choose for them yet.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::FrameCountMismatch`] if there are no frames, or more than
+    ///   fit in a `u32`.
+    /// - [`Error::InvalidChunkData`] for [`ChunkType::FCTL`] if there's no
+    ///   default image and the first frame doesn't cover the whole canvas.
+    /// - Any error from [`encode_into`](Self::encode_into) for the canvas: its
+    ///   header, palette, transparency, metadata and extra chunks, and the
+    ///   default image's pixels, which are the first frame's unless there's a
+    ///   default image.
+    /// - [`Error::InvalidDimensions`] if a frame's width or height is zero or
+    ///   over 2^31 - 1, and [`Error::FrameOutOfBounds`] if it doesn't fit on
+    ///   the canvas.
+    /// - [`Error::InvalidImageDataLength`] if a frame's pixels are the wrong size.
+    pub fn encode_animation_into(
+        &mut self,
+        animation: AnimationRef<'_>,
+        out: &mut Vec<u8>,
+    ) -> Result<(), Error> {
+        let mut stripped_metadata = None;
+        let image = strip(
+            animation.image(),
+            self.options.strip,
+            &mut stripped_metadata,
+        );
+        let frames = animation.frames();
+        let has_default_image = animation.default_image().is_some();
+
+        validate_frames(image.header(), frames, has_default_image)?;
+        validate(&image)?;
+
+        out.clear();
+        let header = image.header();
+        let compression = self.compression_options();
+        let keep_unsafe = self.options.keep_unsafe_chunks;
+
+        write_signature(out);
+        write_chunk(out, ChunkType::IHDR, &header_data(header));
+
+        let control = AnimationControl {
+            // `validate_frames` checked it fits.
+            num_frames: frames.len() as u32,
+            num_plays: animation.num_plays(),
+        };
+        write_chunk(out, ChunkType::ACTL, &control.to_bytes());
+
+        if let Some(metadata) = image.metadata() {
+            write_metadata_before_palette(out, metadata, &mut self.compressor, compression);
+        }
+        write_extra_chunks(out, &image, ChunkPosition::BeforePalette, keep_unsafe);
+        if let Some(palette) = image.palette() {
+            write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());
+        }
+        if let Some(transparency) = image.transparency() {
+            write_chunk(out, ChunkType::TRNS, &transparency_data(transparency));
+        }
+        if let Some(metadata) = image.metadata() {
+            write_metadata_after_palette(out, metadata, &mut self.compressor, compression);
+        }
+        write_extra_chunks(out, &image, ChunkPosition::BeforeImageData, keep_unsafe);
+
+        if has_default_image {
+            self.filter(header, image.data())?;
+            self.compress_scanlines();
+            write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
+        }
+
+        let mut sequence = 0u32;
+        for (index, frame) in frames.iter().enumerate() {
+            write_chunk(out, ChunkType::FCTL, &frame.control(sequence).to_bytes());
+            sequence += 1;
+
+            self.filter(&frame.header(header), frame.data())?;
+            self.compress_scanlines();
+            if index == 0 && !has_default_image {
+                write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
+            } else {
+                write_frame_data(out, &self.compressed, &mut sequence, MAX_CHUNK_LENGTH);
+            }
+        }
+
+        write_extra_chunks(out, &image, ChunkPosition::AfterImageData, keep_unsafe);
+        write_chunk(out, ChunkType::IEND, &[]);
+        Ok(())
+    }
 }
 
 impl Default for Encoder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Drops the chunks `mode` doesn't keep from `image`; see [`StripChunks`].
+/// The stripped metadata is stored in `metadata`, which the result borrows.
+fn strip<'a>(
+    image: ImageRef<'a>,
+    mode: StripChunks,
+    metadata: &'a mut Option<Metadata>,
+) -> ImageRef<'a> {
+    if mode == StripChunks::Keep {
+        return image;
+    }
+
+    *metadata = image
+        .metadata()
+        .map(|metadata| strip_metadata(metadata, mode));
+    // No extra chunks: neither mode keeps any.
+    let mut stripped = ImageRef::new(*image.header(), image.data());
+    // An indexed image needs its palette. Any other image's palette is
+    // only a suggestion that viewers ignore, so it goes too.
+    if let Some(palette) = image
+        .palette()
+        .filter(|_| image.header().color_type == ColorType::Indexed)
+    {
+        stripped = stripped.with_palette(palette);
+    }
+    if let Some(transparency) = image.transparency() {
+        stripped = stripped.with_transparency(transparency);
+    }
+    if let Some(metadata) = &*metadata {
+        stripped = stripped.with_metadata(metadata);
+    }
+    stripped
+}
+
+/// Checks that `frames` can be written as an animation on a canvas with
+/// `header`; see [`Encoder::encode_animation_into`] for the errors. The canvas
+/// itself is checked by `validate`.
+fn validate_frames(
+    header: &ImageHeader,
+    frames: &[FrameRef<'_>],
+    has_default_image: bool,
+) -> Result<(), Error> {
+    let count = u32::try_from(frames.len()).map_err(|_| Error::FrameCountMismatch {
+        expected: u32::MAX,
+        actual: u32::MAX,
+    })?;
+    let Some(first) = frames.first() else {
+        return Err(Error::FrameCountMismatch {
+            expected: 1,
+            actual: count,
+        });
+    };
+    if !has_default_image && !first.control(0).covers(header.width, header.height) {
+        return Err(Error::InvalidChunkData(ChunkType::FCTL));
+    }
+
+    for frame in frames {
+        let frame_header = frame.header(header);
+        ImageHeader::validate_dimensions(frame_header.width, frame_header.height)?;
+        if !frame.control(0).fits_in(header.width, header.height) {
+            return Err(Error::FrameOutOfBounds);
+        }
+
+        let expected = frame_header.image_size()?;
+        if frame.data().len() != expected {
+            return Err(Error::InvalidImageDataLength {
+                expected,
+                actual: frame.data().len(),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// Checks that `image` can be written as a valid PNG; see
