@@ -30,7 +30,7 @@ method, with palettes, `tRNS` transparency and metadata. See
 - Metadata: `gAMA`, `cHRM`, `sRGB`, `iCCP`, `cICP`, `pHYs`, `tIME`, `eXIf` and
   text (`tEXt`, `zTXt`, `iTXt`), parsed into typed values
 - Every chunk read and parsed without decompressing the image data, including
-  private, custom and unknown ones
+  private, custom and unknown ones, and an APNG's frame count and frame controls
 - Decompressed size capped at exactly what the header allows, so a small
   malicious file can't expand without limit
 - Animated PNG (APNG): every frame, and compositing them onto the canvas with
@@ -50,13 +50,14 @@ method, with palettes, `tRNS` transparency and metadata. See
   change how the image looks
 - Reusable `Encoder` that keeps its compressor and buffers between images
 - Animated PNG (APNG), with frame offsets, delays, disposal and blending, and
-  an optional default image outside the animation
+  an optional default image outside the animation; optionally cropping frames
+  to what changed, and indexed color shared by every frame
 
 ## Installation
 
 ```toml
 [dependencies]
-format-png = "0.2"
+format-png = "0.3"
 ```
 
 The crate is imported as `format_png`. It needs Rust 1.88 or later.
@@ -396,6 +397,29 @@ fn main() -> Result<(), format_png::Error> {
 }
 ```
 
+Frames converted from video or GIF usually cover the whole canvas.
+`EncodeOptions::crop_frames` crops each one to the area that changed since the
+frame before, whenever that can't change what viewers show, and
+`PaletteMode::Auto` writes the whole animation as indexed color when its frames
+have at most 256 colors between them:
+
+```rust,no_run
+use format_png::{AnimationRef, EncodeOptions, Encoder, FrameRef, ImageHeader, PaletteMode};
+
+fn encode(header: ImageHeader, frames: &[FrameRef<'_>]) -> Result<Vec<u8>, format_png::Error> {
+    let mut encoder = Encoder::with_options(EncodeOptions {
+        crop_frames: true,
+        palette: PaletteMode::Auto,
+        ..EncodeOptions::default()
+    });
+    encoder.encode_animation(AnimationRef::new(header, frames))
+}
+```
+
+`read_chunks` gives an APNG's `acTL` and `fcTL` chunks without decoding any
+frame: `animation_control()` for the number of frames and plays, and
+`frame_controls()` for each frame's size, position and delay.
+
 ## Conversion rules
 
 `to_bitmap`, `decode_rgba8`, `decode_rgb8` and the `Decoder` bitmap methods convert pixels like this:
@@ -429,9 +453,9 @@ will be added as more of the format is supported.
   `ImageRef::with_chunks`, and available through `read_chunks` and `ChunkReader`.
 - **Color management:** gamma, chromaticities, ICC profiles and `cICP` are read
   and written but not applied to the pixels.
-- **Animated PNG:** `PaletteMode::Auto` isn't applied to animations, and the
-  encoder doesn't crop frames to what changed between them; give it the
-  smallest frames yourself.
+- **Animated PNG:** frames aren't cropped when blending or disposal would make
+  that change what's shown, and frames that don't change aren't merged into
+  the one before.
 - **Lossy encoding:** `PaletteMode::Auto` only converts images that fit a
   palette exactly; there's no quantization.
 

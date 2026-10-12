@@ -24,6 +24,7 @@
 
 mod animation_ref;
 mod chunk_writer;
+mod crop;
 mod encoder;
 mod extra_chunks;
 mod filter;

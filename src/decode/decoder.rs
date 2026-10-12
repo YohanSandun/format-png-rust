@@ -174,6 +174,9 @@ impl Decoder {
     /// decoder's [`palette`](Self::palette) and other accessors for the last
     /// image decoded aren't changed.
     ///
+    /// An animated PNG's `acTL` and `fcTL` chunks are parsed too; see
+    /// [`PngChunks::animation_control`].
+    ///
     /// ```
     /// use format_png::Decoder;
     /// use format_png::png::ChunkType;
@@ -192,7 +195,10 @@ impl Decoder {
     /// The same chunk errors as [`decode_into`](Self::decode_into): everything
     /// except [`Error::Decompression`], [`Error::ImageDataTooShort`],
     /// [`Error::ImageDataTooLong`], [`Error::InvalidFilterType`] and
-    /// [`Error::ImageTooLarge`], which need the image data decompressed.
+    /// [`Error::ImageTooLarge`], which need the image data decompressed. With
+    /// [`DecodeOptions::strict_ancillary`], also the animation errors of
+    /// [`decode_animation`](Self::decode_animation), other than
+    /// [`Error::NotAnimated`].
     pub fn read_chunks<'a>(&mut self, data: &'a [u8]) -> Result<PngChunks<'a>, Error> {
         let mut chunks = self.chunks(data)?;
         let (header, header_chunk) = Self::read_image_header_chunk(&mut chunks)?;
@@ -211,7 +217,17 @@ impl Decoder {
             |chunk| all.push(chunk),
         )?;
 
-        Ok(PngChunks::new(header, all, found))
+        let png = PngChunks::new(header, all, found);
+        // `all` starts with `IHDR`, which `read_animation` doesn't expect.
+        match read_animation(&header, &png.chunks()[1..]) {
+            Ok(layout) => {
+                let controls = layout.frames.iter().map(|frame| frame.control).collect();
+                Ok(png.with_animation(layout.control, controls))
+            }
+            Err(Error::NotAnimated) => Ok(png),
+            Err(error) if self.options.strict_ancillary => Err(error),
+            Err(_) => Ok(png),
+        }
     }
 
     /// Decodes the whole image into the PNG's own pixel format; see [`Image`].

@@ -79,7 +79,9 @@
 //! from an [`AnimationRef`] of [`FrameRef`]s. [`AnimatedImage::to_bitmaps`] or
 //! a [`Compositor`] draws the frames onto the canvas, as a viewer shows them.
 //! The chunk types are in [`png::AnimationControl`] and [`png::FrameControl`].
-//! [`decode`] and [`encode`] still read and write just the default image.
+//! [`decode`] and [`encode`] still read and write just the default image, and
+//! [`read_chunks`] gives the `acTL` and `fcTL` chunks without decoding any frame.
+//! [`EncodeOptions::crop_frames`] and [`PaletteMode::Auto`] make animations smaller.
 //!
 //! ```
 //! use format_png::{AnimationRef, ColorType, FrameRef, ImageHeader, Interlace};
@@ -129,9 +131,9 @@
 //!   [`ImageRef::with_chunks`], and read with [`read_chunks`] or a [`ChunkReader`].
 //! - Color management: gamma, chromaticities, ICC profiles and `cICP` are read
 //!   and written but not applied to the pixels.
-//! - Animated PNG: [`PaletteMode::Auto`] isn't applied to animations, and the
-//!   encoder doesn't crop frames to what changed; give it the smallest frames
-//!   yourself.
+//! - Animated PNG: [`EncodeOptions::crop_frames`] leaves frames whose blending
+//!   or disposal would make cropping change what's shown, and frames that
+//!   don't change aren't merged into the one before.
 //! - Lossy encoding: [`PaletteMode::Auto`] only converts images that fit a
 //!   palette exactly.
 

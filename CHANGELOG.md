@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 Animated PNG (APNG) support.
+
+### Breaking
+
+- `EncodeOptions` has a new field, `crop_frames`. Code that lists every field
+  without `..EncodeOptions::default()` needs to add it. It's off by default,
+  and only affects animations.
 
 ### Added
 
@@ -19,12 +25,21 @@ Animated PNG (APNG) support.
 - `png::AnimationControl`, `png::FrameControl`, `png::DisposeOp` and
   `png::BlendOp` parse and write the `acTL` and `fcTL` chunks, and
   `ChunkType::ACTL`, `ChunkType::FCTL` and `ChunkType::FDAT` name them.
+- `EncodeOptions::crop_frames` crops each whole-canvas frame to the area that
+  changed since the frame before, when that can't change what's shown.
+- `PaletteMode::Auto` applies to animations: they're written as indexed color
+  when every frame and the default image have at most 256 colors between them.
+- `PngChunks::animation_control` and `PngChunks::frame_controls` give an
+  animated PNG's `acTL` and `fcTL` chunks from `read_chunks`, checked as
+  `decode_animation` checks them. A broken animation reads as a still image,
+  or fails with `DecodeOptions::strict_ancillary`.
 - `Error::NotAnimated`, `Error::FrameSequenceMismatch`,
   `Error::FrameCountMismatch`, `Error::MissingFrameData` and
   `Error::FrameOutOfBounds`.
 
 ### Changed
 
+- `PngChunks::unknown_chunks` no longer lists `acTL`, `fcTL` and `fdAT`.
 - Extra chunks of type `acTL`, `fcTL` and `fdAT` are never written, even with
   `EncodeOptions::keep_unsafe_chunks`. Re-encoding a decoded APNG with its
   chunks kept used to write the old animation chunks around the new image data,

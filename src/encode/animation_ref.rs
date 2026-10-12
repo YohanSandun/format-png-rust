@@ -1,3 +1,4 @@
+use super::crop::Area;
 use super::image_ref::ImageRef;
 use crate::png::{
     BlendOp, DisposeOp, FrameControl, ImageHeader, Metadata, OwnedChunk, Palette, Transparency,
@@ -86,6 +87,24 @@ impl<'a> FrameRef<'a> {
     #[must_use]
     pub fn data(&self) -> &'a [u8] {
         self.data
+    }
+
+    /// This frame with `data` for its pixels instead, which have the same size.
+    pub(crate) fn with_data<'b>(&self, data: &'b [u8]) -> FrameRef<'b>
+    where
+        'a: 'b,
+    {
+        FrameRef { data, ..*self }
+    }
+
+    /// This frame moved and resized to `area`. Its pixels need replacing too,
+    /// with [`with_data`](Self::with_data).
+    pub(crate) fn with_area(mut self, area: Area) -> Self {
+        self.x_offset = area.x;
+        self.y_offset = area.y;
+        self.width = area.width;
+        self.height = area.height;
+        self
     }
 
     /// The frame's header: `canvas` with the frame's width and height.

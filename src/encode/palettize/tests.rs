@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use super::palettize;
+use super::{palettize, palettize_all};
 use crate::png::{ColorType, ImageHeader, Interlace, Transparency};
 
 fn header(width: u32, height: u32, bit_depth: u8, color_type: ColorType) -> ImageHeader {
@@ -195,4 +195,39 @@ fn palettize_replaces_old_contents() {
     palettize(&header(1, 1, 8, ColorType::Rgb), &[1, 2, 3], None, &mut out).unwrap();
 
     assert_eq!(out, [0]);
+}
+
+// ---------- palettize_all ----------
+
+#[test]
+fn palettize_all_shares_one_palette_across_images() {
+    let (red, green, blue) = ([255, 0, 0], [0, 255, 0], [0, 0, 255]);
+    let first = [red, green].concat();
+    let second = [blue, red, green].concat();
+    let images = [
+        (header(2, 1, 8, ColorType::Rgb), &first[..]),
+        (header(3, 1, 8, ColorType::Rgb), &second[..]),
+    ];
+    let mut out = Vec::new();
+
+    let (palettized, ranges) = palettize_all(&images, None, &mut out).unwrap();
+
+    assert_eq!(palettized.palette.colors(), [red, green, blue]);
+    assert_eq!(palettized.header, header(2, 1, 2, ColorType::Indexed));
+    assert_eq!(ranges, [0..1, 1..2]);
+    assert_eq!(out, [0b0001_0000, 0b1000_0100]);
+}
+
+#[test]
+fn palettize_all_counts_colors_across_images() {
+    let first = distinct_rgb(200);
+    let second: Vec<u8> = (200..400usize)
+        .flat_map(|i| [i as u8, (i >> 8) as u8, 7])
+        .collect();
+    let images = [
+        (header(200, 1, 8, ColorType::Rgb), &first[..]),
+        (header(200, 1, 8, ColorType::Rgb), &second[..]),
+    ];
+
+    assert_eq!(palettize_all(&images, None, &mut Vec::new()), None);
 }

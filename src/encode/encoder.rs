@@ -5,10 +5,11 @@ use super::chunk_writer::{
     MAX_CHUNK_LENGTH, header_data, transparency_data, write_chunk, write_frame_data,
     write_image_data, write_signature,
 };
+use super::crop::crop_frames;
 use super::filter::filter_image;
 use super::image_ref::ImageRef;
 use super::options::{EncodeOptions, PaletteMode, StripChunks};
-use super::palettize::palettize;
+use super::palettize::{palettize, palettize_all};
 use super::parallel::{SEGMENT_SIZE, SegmentCompression, compress_zlib_segments};
 use super::prepared::{Deferred, PreparedPng};
 use super::strip::strip_metadata;
@@ -349,9 +350,12 @@ impl Encoder {
     /// its image data: `IDAT` chunks for the first frame, unless there's a
     /// separate default image, and `fdAT` chunks for the others.
     ///
-    /// [`EncodeOptions::strip`] and the filter, compression and thread options
-    /// apply as for a single image. [`PaletteMode::Auto`] doesn't: the frames
-    /// share one palette, which it can't choose for them yet.
+    /// The options apply as for a single image, and
+    /// [`EncodeOptions::crop_frames`] crops the frames to what changed.
+    /// [`PaletteMode::Auto`] converts the animation to indexed color if every
+    /// frame and the default image together have at most 256 colors, since
+    /// they share one palette, and compares the two when they total at most
+    /// 16 KiB of pixel data.
     ///
     /// # Errors
     ///
@@ -378,31 +382,139 @@ impl Encoder {
             self.options.strip,
             &mut stripped_metadata,
         );
-        let frames = animation.frames();
         let has_default_image = animation.default_image().is_some();
 
-        validate_frames(image.header(), frames, has_default_image)?;
+        validate_frames(image.header(), animation.frames(), has_default_image)?;
         validate(&image)?;
 
+        let cropped = if self.options.crop_frames {
+            crop_frames(image.header(), animation.frames())
+        } else {
+            Vec::new()
+        };
+        let frames: Vec<FrameRef<'_>> = animation
+            .frames()
+            .iter()
+            .enumerate()
+            .map(|(i, frame)| match cropped.get(i) {
+                Some(Some(cropped)) => frame.with_area(cropped.area).with_data(&cropped.data),
+                _ => *frame,
+            })
+            .collect();
+        let animation = Animation {
+            image,
+            frames: &frames,
+            has_default_image,
+            num_plays: animation.num_plays(),
+        };
+
+        // As in `run`: the converted frames borrow this buffer.
+        let mut indexed = std::mem::take(&mut self.indexed);
+        let result = self.encode_animation_validated(&animation, &mut indexed, out);
+        self.indexed = indexed;
+        result
+    }
+
+    /// `encode_animation_into` after stripping, validation and cropping: like
+    /// `encode_validated`, converts the animation to indexed color if
+    /// `PaletteMode::Auto` can, with the indices in `indexed`, and writes the
+    /// smaller of the two for small animations.
+    fn encode_animation_validated(
+        &mut self,
+        animation: &Animation<'_>,
+        indexed: &mut Vec<u8>,
+        out: &mut Vec<u8>,
+    ) -> Result<(), Error> {
+        let header = animation.image.header();
+        let mut images = Vec::with_capacity(animation.frames.len() + 1);
+        if animation.has_default_image {
+            images.push((*header, animation.image.data()));
+        }
+        images.extend(
+            animation
+                .frames
+                .iter()
+                .map(|frame| (frame.header(header), frame.data())),
+        );
+
+        let palettized = match self.options.palette {
+            PaletteMode::Auto => palettize_all(&images, animation.image.transparency(), indexed),
+            _ => None,
+        };
+        let Some((palettized, ranges)) = palettized else {
+            return self.write_animation(animation, self.options.keep_unsafe_chunks, out);
+        };
+
+        // The first range is the default image's: the first frame's unless
+        // there's a separate one.
+        let frame_ranges = &ranges[usize::from(animation.has_default_image)..];
+        let frames: Vec<FrameRef<'_>> = animation
+            .frames
+            .iter()
+            .zip(frame_ranges)
+            .map(|(frame, range)| frame.with_data(&indexed[range.clone()]))
+            .collect();
+        let image = &animation.image;
+        let mut converted = ImageRef::new(palettized.header, &indexed[ranges[0].clone()])
+            .with_palette(&palettized.palette)
+            .with_chunks(image.chunks());
+        if let Some(transparency) = &palettized.transparency {
+            converted = converted.with_transparency(transparency);
+        }
+        if let Some(metadata) = image.metadata() {
+            converted = converted.with_metadata(metadata);
+        }
+        let converted = Animation {
+            image: converted,
+            frames: &frames,
+            ..*animation
+        };
+        // As in `encode_validated`, unsafe-to-copy chunks describe the old color type.
+        self.write_animation(&converted, false, out)?;
+
+        // As in `encode_validated`, keep the smaller of the two for small animations.
+        let size: usize = images.iter().map(|(_, data)| data.len()).sum();
+        if size <= AUTO_PALETTE_COMPARE_LIMIT {
+            let mut unconverted = std::mem::take(&mut self.unconverted);
+            let result =
+                self.write_animation(animation, self.options.keep_unsafe_chunks, &mut unconverted);
+            if result.is_ok() && unconverted.len() <= out.len() {
+                std::mem::swap(out, &mut unconverted);
+            }
+            self.unconverted = unconverted;
+            result?;
+        }
+
+        Ok(())
+    }
+
+    /// Filters, compresses and writes `animation` as an APNG to `out`,
+    /// replacing its contents, as `write_png` does for an image.
+    fn write_animation(
+        &mut self,
+        animation: &Animation<'_>,
+        keep_unsafe: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<(), Error> {
         out.clear();
+        let image = &animation.image;
         let header = image.header();
         let compression = self.compression_options();
-        let keep_unsafe = self.options.keep_unsafe_chunks;
 
         write_signature(out);
         write_chunk(out, ChunkType::IHDR, &header_data(header));
 
         let control = AnimationControl {
             // `validate_frames` checked it fits.
-            num_frames: frames.len() as u32,
-            num_plays: animation.num_plays(),
+            num_frames: animation.frames.len() as u32,
+            num_plays: animation.num_plays,
         };
         write_chunk(out, ChunkType::ACTL, &control.to_bytes());
 
         if let Some(metadata) = image.metadata() {
             write_metadata_before_palette(out, metadata, &mut self.compressor, compression);
         }
-        write_extra_chunks(out, &image, ChunkPosition::BeforePalette, keep_unsafe);
+        write_extra_chunks(out, image, ChunkPosition::BeforePalette, keep_unsafe);
         if let Some(palette) = image.palette() {
             write_chunk(out, ChunkType::PLTE, palette.colors().as_flattened());
         }
@@ -412,32 +524,44 @@ impl Encoder {
         if let Some(metadata) = image.metadata() {
             write_metadata_after_palette(out, metadata, &mut self.compressor, compression);
         }
-        write_extra_chunks(out, &image, ChunkPosition::BeforeImageData, keep_unsafe);
+        write_extra_chunks(out, image, ChunkPosition::BeforeImageData, keep_unsafe);
 
-        if has_default_image {
+        if animation.has_default_image {
             self.filter(header, image.data())?;
             self.compress_scanlines();
             write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
         }
 
         let mut sequence = 0u32;
-        for (index, frame) in frames.iter().enumerate() {
+        for (index, frame) in animation.frames.iter().enumerate() {
             write_chunk(out, ChunkType::FCTL, &frame.control(sequence).to_bytes());
             sequence += 1;
 
             self.filter(&frame.header(header), frame.data())?;
             self.compress_scanlines();
-            if index == 0 && !has_default_image {
+            if index == 0 && !animation.has_default_image {
                 write_image_data(out, &self.compressed, MAX_CHUNK_LENGTH);
             } else {
                 write_frame_data(out, &self.compressed, &mut sequence, MAX_CHUNK_LENGTH);
             }
         }
 
-        write_extra_chunks(out, &image, ChunkPosition::AfterImageData, keep_unsafe);
+        write_extra_chunks(out, image, ChunkPosition::AfterImageData, keep_unsafe);
         write_chunk(out, ChunkType::IEND, &[]);
         Ok(())
     }
+}
+
+/// An animation ready to write: stripped, validated, and maybe cropped or
+/// converted, so its frames and pixels may no longer be the caller's.
+#[derive(Debug, Clone, Copy)]
+struct Animation<'a> {
+    /// The canvas, with the default image's pixels: the first frame's unless
+    /// `has_default_image`.
+    image: ImageRef<'a>,
+    frames: &'a [FrameRef<'a>],
+    has_default_image: bool,
+    num_plays: u32,
 }
 
 impl Default for Encoder {

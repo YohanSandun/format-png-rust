@@ -3,7 +3,7 @@
 use format_png::png::{BlendOp, ChunkType, DisposeOp};
 use format_png::{
     AnimationRef, ColorType, DecodeOptions, Decoder, EncodeOptions, Encoder, Error, FrameRef,
-    ImageHeader, Interlace, Palette, PaletteAlpha, StripChunks, Threads, Transparency,
+    ImageHeader, Interlace, Palette, PaletteAlpha, PaletteMode, StripChunks, Threads, Transparency,
 };
 
 fn header(width: u32, height: u32, color_type: ColorType, bit_depth: u8) -> ImageHeader {
@@ -347,6 +347,287 @@ fn encoder_rejects_invalid_frames() {
         Err(Error::InvalidDimensions {
             width: 0,
             height: 1
+        })
+    );
+}
+
+/// `count` whole-canvas RGBA frames of `width × height`: a gray background
+/// with a 2×2 square moving along the top-left to bottom-right diagonal, each
+/// frame a different color.
+fn moving_square(width: u32, height: u32, count: u8) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|k| {
+            let mut data = [128, 128, 128, 255].repeat((width * height) as usize);
+            let at = u32::from(k) * 2;
+            for (y, x) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                let i = (((at + y) * width + at + x) * 4) as usize;
+                data[i..i + 4].copy_from_slice(&[40 * k, 255 - 40 * k, 0, 255]);
+            }
+            data
+        })
+        .collect()
+}
+
+fn encode_with(options: EncodeOptions, animation: AnimationRef<'_>) -> Vec<u8> {
+    Encoder::with_options(options)
+        .encode_animation(animation)
+        .unwrap()
+}
+
+#[test]
+fn crop_frames_shrinks_frames_without_changing_what_is_shown() {
+    for interlace in [Interlace::None, Interlace::Adam7] {
+        let canvas = ImageHeader {
+            interlace,
+            ..header(16, 16, ColorType::Rgba, 8)
+        };
+        let data = moving_square(16, 16, 4);
+        let frames: Vec<_> = data.iter().map(|d| FrameRef::new(16, 16, d)).collect();
+        let crop = EncodeOptions {
+            crop_frames: true,
+            ..EncodeOptions::default()
+        };
+
+        let full = encode_with(EncodeOptions::default(), AnimationRef::new(canvas, &frames));
+        let cropped = encode_with(crop, AnimationRef::new(canvas, &frames));
+
+        assert!(cropped.len() < full.len());
+        let full = format_png::decode_animation(&full).unwrap();
+        let cropped = format_png::decode_animation(&cropped).unwrap();
+        assert_eq!(cropped.to_bitmaps().unwrap(), full.to_bitmaps().unwrap());
+        // The first frame is the default image, so it stays whole. Each other
+        // one clears the last square and draws the next: a 4×4 area.
+        let areas: Vec<_> = cropped
+            .frames()
+            .iter()
+            .map(|f| {
+                let c = f.control();
+                (c.x_offset, c.y_offset, c.width, c.height)
+            })
+            .collect();
+        assert_eq!(
+            areas,
+            [(0, 0, 16, 16), (0, 0, 4, 4), (2, 2, 4, 4), (4, 4, 4, 4)]
+        );
+    }
+}
+
+#[test]
+fn crop_frames_handles_packed_pixels_and_repeated_frames() {
+    let canvas = header(13, 5, ColorType::Grayscale, 1);
+    let first = pixels(&canvas, 1);
+    let mut second = first.clone();
+    second[2 * 2 + 1] ^= 0b0010_0000; // row 2, pixel 10
+    let frames = [
+        FrameRef::new(13, 5, &first),
+        FrameRef::new(13, 5, &second),
+        FrameRef::new(13, 5, &second),
+    ];
+    let crop = EncodeOptions {
+        crop_frames: true,
+        ..EncodeOptions::default()
+    };
+
+    let png = encode_with(crop, AnimationRef::new(canvas, &frames));
+    let animation = format_png::decode_animation(&png).unwrap();
+
+    let controls: Vec<_> = animation.frames().iter().map(|f| *f.control()).collect();
+    assert_eq!((controls[1].x_offset, controls[1].y_offset), (10, 2));
+    assert_eq!((controls[1].width, controls[1].height), (1, 1));
+    assert_eq!((controls[2].width, controls[2].height), (1, 1));
+
+    let uncropped = format_png::encode_animation(AnimationRef::new(canvas, &frames)).unwrap();
+    assert_eq!(
+        animation.to_bitmaps().unwrap(),
+        format_png::decode_animation(&uncropped)
+            .unwrap()
+            .to_bitmaps()
+            .unwrap()
+    );
+}
+
+#[test]
+fn auto_palette_converts_animations_with_few_colors() {
+    let canvas = header(40, 40, ColorType::Rgba, 8);
+    let data = moving_square(40, 40, 5);
+    let frames: Vec<_> = data.iter().map(|d| FrameRef::new(40, 40, d)).collect();
+    let auto = EncodeOptions {
+        palette: PaletteMode::Auto,
+        ..EncodeOptions::default()
+    };
+
+    let kept = encode_with(EncodeOptions::default(), AnimationRef::new(canvas, &frames));
+    let converted = encode_with(auto, AnimationRef::new(canvas, &frames));
+
+    let animation = format_png::decode_animation(&converted).unwrap();
+    assert_eq!(animation.header().color_type, ColorType::Indexed);
+    // The background and one square color per frame.
+    assert_eq!(animation.palette().map(Palette::len), Some(6));
+    assert_eq!(animation.header().bit_depth, 4);
+    assert!(converted.len() < kept.len());
+    assert_eq!(
+        animation.to_bitmaps().unwrap(),
+        format_png::decode_animation(&kept)
+            .unwrap()
+            .to_bitmaps()
+            .unwrap()
+    );
+}
+
+#[test]
+fn auto_palette_keeps_the_smaller_file_for_small_animations() {
+    // Tiny: the palette chunks cost more than they save.
+    let canvas = header(2, 1, ColorType::Rgb, 8);
+    let (frame, default) = ([1, 2, 3, 1, 2, 3], [9, 9, 9, 8, 8, 8]);
+    let frames = [FrameRef::new(2, 1, &frame)];
+    let animation = AnimationRef::new(canvas, &frames).with_default_image(&default);
+    let auto = EncodeOptions {
+        palette: PaletteMode::Auto,
+        ..EncodeOptions::default()
+    };
+
+    let png = encode_with(auto, animation);
+
+    assert_eq!(png, format_png::encode_animation(animation).unwrap());
+}
+
+#[test]
+fn auto_palette_converts_the_default_image_too() {
+    let canvas = header(40, 40, ColorType::Rgba, 8);
+    let data = moving_square(40, 40, 3);
+    let frames: Vec<_> = data[1..].iter().map(|d| FrameRef::new(40, 40, d)).collect();
+    let animation = AnimationRef::new(canvas, &frames).with_default_image(&data[0]);
+    let auto = EncodeOptions {
+        palette: PaletteMode::Auto,
+        ..EncodeOptions::default()
+    };
+
+    let png = encode_with(auto, animation);
+
+    let default = format_png::decode_rgba8(&png).unwrap();
+    assert_eq!(default.data(), data[0]);
+    let animation = format_png::decode_animation(&png).unwrap();
+    assert_eq!(animation.header().color_type, ColorType::Indexed);
+    assert!(!animation.default_image_is_frame());
+    let bitmaps = animation.to_bitmaps().unwrap();
+    assert_eq!(bitmaps[0].data(), data[1]);
+    assert_eq!(bitmaps[1].data(), data[2]);
+}
+
+#[test]
+fn auto_palette_keeps_animations_with_too_many_colors_together() {
+    // 200 colors in each frame, 400 in all.
+    let canvas = header(200, 1, ColorType::Rgb, 8);
+    let first: Vec<u8> = (0..200u8).flat_map(|i| [i, 0, 0]).collect();
+    let second: Vec<u8> = (0..200u8).flat_map(|i| [0, i, 1]).collect();
+    let frames = [
+        FrameRef::new(200, 1, &first),
+        FrameRef::new(200, 1, &second),
+    ];
+    let auto = EncodeOptions {
+        palette: PaletteMode::Auto,
+        ..EncodeOptions::default()
+    };
+
+    let png = encode_with(auto, AnimationRef::new(canvas, &frames));
+
+    assert_eq!(
+        format_png::decode_animation(&png)
+            .unwrap()
+            .header()
+            .color_type,
+        ColorType::Rgb
+    );
+}
+
+#[test]
+fn auto_palette_and_crop_frames_together() {
+    let canvas = header(40, 40, ColorType::Rgba, 8);
+    let data = moving_square(40, 40, 5);
+    let frames: Vec<_> = data.iter().map(|d| FrameRef::new(40, 40, d)).collect();
+    let both = EncodeOptions {
+        palette: PaletteMode::Auto,
+        crop_frames: true,
+        ..EncodeOptions::default()
+    };
+
+    let png = encode_with(both, AnimationRef::new(canvas, &frames));
+    let plain = format_png::encode_animation(AnimationRef::new(canvas, &frames)).unwrap();
+
+    let animation = format_png::decode_animation(&png).unwrap();
+    assert_eq!(animation.header().color_type, ColorType::Indexed);
+    assert_eq!(animation.frames()[1].control().width, 4);
+    assert_eq!(
+        animation.to_bitmaps().unwrap(),
+        format_png::decode_animation(&plain)
+            .unwrap()
+            .to_bitmaps()
+            .unwrap()
+    );
+}
+
+/// A 2-frame animation on a 2×1 RGBA canvas, played 3 times.
+fn two_frames() -> Vec<u8> {
+    let canvas = header(2, 1, ColorType::Rgba, 8);
+    let (both, right) = ([255, 0, 0, 255, 255, 0, 0, 255], [0, 0, 255, 255]);
+    let frames = [
+        FrameRef::new(2, 1, &both),
+        FrameRef::new(1, 1, &right).at(1, 0).with_delay(1, 2),
+    ];
+    format_png::encode_animation(AnimationRef::new(canvas, &frames).with_num_plays(3)).unwrap()
+}
+
+#[test]
+fn read_chunks_parses_the_animation_chunks() {
+    let png = two_frames();
+
+    let chunks = format_png::read_chunks(&png).unwrap();
+
+    let control = chunks.animation_control().unwrap();
+    assert_eq!((control.num_frames, control.num_plays), (2, 3));
+    let frames = chunks.frame_controls();
+    assert_eq!(frames.len(), 2);
+    assert_eq!((frames[1].x_offset, frames[1].width), (1, 1));
+    assert_eq!(frames[1].delay_seconds(), 0.5);
+    assert_eq!(chunks.unknown_chunks().count(), 0);
+}
+
+#[test]
+fn read_chunks_of_a_still_image_has_no_animation() {
+    let png = format_png::encode_rgba8(1, 1, &[0, 0, 0, 255]).unwrap();
+
+    let chunks = format_png::read_chunks(&png).unwrap();
+
+    assert_eq!(chunks.animation_control(), None);
+    assert!(chunks.frame_controls().is_empty());
+}
+
+#[test]
+fn read_chunks_skips_a_broken_animation_unless_strict() {
+    let mut png = two_frames();
+    // Claim 5 frames. The CRC no longer matches, so it isn't checked.
+    let at = png.windows(4).position(|w| w == b"acTL").unwrap() + 4;
+    png[at..at + 4].copy_from_slice(&5u32.to_be_bytes());
+    let options = DecodeOptions {
+        validate_crc: false,
+        ..DecodeOptions::default()
+    };
+
+    let chunks = Decoder::with_options(options.clone())
+        .read_chunks(&png)
+        .unwrap();
+    assert_eq!(chunks.animation_control(), None);
+    assert!(chunks.frame_controls().is_empty());
+
+    let strict = DecodeOptions {
+        strict_ancillary: true,
+        ..options
+    };
+    assert_eq!(
+        Decoder::with_options(strict).read_chunks(&png).map(|_| ()),
+        Err(Error::FrameCountMismatch {
+            expected: 5,
+            actual: 2
         })
     );
 }
